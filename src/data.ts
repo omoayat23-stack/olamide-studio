@@ -5,12 +5,12 @@
 
 import { Service, PortfolioItem, Testimonial, StatItem } from './types';
 
-// Let's use the precise paths of our generated images
+// Let's use high-quality professional photography URLs from Unsplash
 export const IMAGES = {
-  weddingCinematic: '/src/assets/images/wedding_cinematic_1782327639845.jpg',
-  fashionEditorial: '/src/assets/images/fashion_editorial_1782327653048.jpg',
-  graduationPortrait: '/src/assets/images/graduation_portrait_1782327668134.jpg',
-  photographerPortrait: '/src/assets/images/photographer_portrait_1782327683000.jpg',
+  weddingCinematic: 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80',
+  fashionEditorial: 'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80',
+  graduationPortrait: 'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=1200&q=80',
+  photographerPortrait: 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80',
 };
 
 export const SERVICES: Service[] = [
@@ -361,44 +361,7 @@ export const WHY_CHOOSE_US = [
   }
 ];
 
-export const INSTAGRAM_POSTS = [
-  {
-    id: 'ig1',
-    imageUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80',
-    likes: '1.2k',
-    comments: '48'
-  },
-  {
-    id: 'ig2',
-    imageUrl: IMAGES.weddingCinematic,
-    likes: '2.5k',
-    comments: '112'
-  },
-  {
-    id: 'ig3',
-    imageUrl: IMAGES.fashionEditorial,
-    likes: '1.8k',
-    comments: '74'
-  },
-  {
-    id: 'ig4',
-    imageUrl: IMAGES.graduationPortrait,
-    likes: '920',
-    comments: '35'
-  },
-  {
-    id: 'ig5',
-    imageUrl: 'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=600&q=80',
-    likes: '1.4k',
-    comments: '53'
-  },
-  {
-    id: 'ig6',
-    imageUrl: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=600&q=80',
-    likes: '3.1k',
-    comments: '145'
-  }
-];
+export const INSTAGRAM_POSTS = [];
 
 export const HERO_SLIDES = [
   {

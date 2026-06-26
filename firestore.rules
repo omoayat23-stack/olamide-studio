@@ -183,6 +183,20 @@ service cloud.firestore {
       allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(txId);
     }
 
+    // Instagram Journal
+    match /instagram/{postId} {
+      allow read: if true;
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(postId);
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(postId);
+    }
+
+    // Cinematic Spotlight
+    match /spotlight/{itemId} {
+      allow read: if true;
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(itemId);
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(itemId);
+    }
+
     // Website Content and Admin Profiles
     match /content/{contentId} {
       allow read: if true;

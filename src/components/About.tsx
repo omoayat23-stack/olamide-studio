@@ -12,7 +12,7 @@ const DEFAULT_BIOGRAPHY = `Olamide Visuals is a luxury, elite creative studio bo
 
 Olamide approaches every frame with an artist’s meticulous precision. Whether directing vibrant traditional weddings, styling avant-garde editorial runway layouts, or framing academic triumphs, our dedication to immaculate composition and elite color-grading delivers visuals that resonate across continents.`;
 
-const DEFAULT_PROFILE_IMAGE = '/src/assets/images/photographer_portrait_1782327683000.jpg';
+const DEFAULT_PROFILE_IMAGE = 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80';
 
 export default function About() {
   const [aboutData, setAboutData] = useState(() => {

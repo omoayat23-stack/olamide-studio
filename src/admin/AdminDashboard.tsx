@@ -11,17 +11,28 @@ import {
   Trash2, Edit3, Plus, Check, X, ArrowUpRight, Folder, Globe, Link2, 
   Sliders, MessageSquare, Database, RefreshCw, Star, Info, Mail, Phone, 
   MapPin, CheckCircle, AlertTriangle, Play, HelpCircle, Download, FileSpreadsheet,
-  Upload, Eye, CreditCard, ToggleLeft, ToggleRight, HardDrive, Type, FileCode, Lock
+  Upload, Eye, CreditCard, ToggleLeft, ToggleRight, HardDrive, Type, FileCode, Lock, Sparkles, Instagram,
+  Heart, MessageCircle
 } from 'lucide-react';
 import { 
   getFromDB, saveToDB, logAdminAction as rawLogAdminAction, CrewMember, BlogPost, Transaction, 
-  AdminProfile, ActivityLog, ContactMessage, WebsiteContent 
+  AdminProfile, ActivityLog, ContactMessage, WebsiteContent, compressImageBase64
 } from './db';
 import { BookingData, Service, PortfolioItem } from '../types';
 import { PORTFOLIO_ITEMS } from '../data';
 
 interface AdminDashboardProps {
   onLogout: () => void;
+}
+
+export interface SpotlightItem {
+  id: string;
+  title: string;
+  category: string;
+  tagline: string;
+  description: string;
+  imageUrl: string;
+  technicalSpecs: string;
 }
 
 type TabType = 
@@ -38,7 +49,9 @@ type TabType =
   | 'seo' 
   | 'messages' 
   | 'brand' 
-  | 'logs';
+  | 'logs'
+  | 'instagram'
+  | 'spotlight';
 
 export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   // Navigation & UI State
@@ -59,6 +72,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [content, setContent] = useState<WebsiteContent | null>(null);
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [instagramPosts, setInstagramPosts] = useState<{ id: string; imageUrl: string; likes: string; comments: string }[]>([]);
+  const [spotlightItems, setSpotlightItems] = useState<SpotlightItem[]>([]);
 
   // Shadow logAdminAction for instant, real-time UI logging updates
   const logAdminAction = (action: string, category: ActivityLog['category']) => {
@@ -164,6 +179,135 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [blogForm, setBlogForm] = useState<Partial<BlogPost>>({});
   const [serviceForm, setServiceForm] = useState<Partial<Service>>({});
   const [portfolioForm, setPortfolioForm] = useState<Partial<PortfolioItem>>({});
+  const [instagramForm, setInstagramForm] = useState({ imageUrl: '', likes: '', comments: '' });
+  const [uploadingIg, setUploadingIg] = useState(false);
+  const [spotlightForm, setSpotlightForm] = useState({ title: '', category: '', tagline: '', description: '', imageUrl: '', technicalSpecs: '' });
+  const [uploadingSpotlight, setUploadingSpotlight] = useState(false);
+
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiScanResult, setAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string } | null>(null);
+
+  const [spotlightAiAnalyzing, setSpotlightAiAnalyzing] = useState(false);
+  const [spotlightAiScanResult, setSpotlightAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string } | null>(null);
+
+  const analyzePortfolioImage = async (imageSrc: string) => {
+    if (!imageSrc) return;
+    setAiAnalyzing(true);
+    setAiScanResult(null);
+    triggerToast("AI is scanning and analyzing the image...");
+
+    try {
+      let base64Image = imageSrc;
+
+      if (!imageSrc.startsWith('data:')) {
+        try {
+          const response = await fetch(imageSrc);
+          const blob = await response.blob();
+          base64Image = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn("Could not convert image URL to base64 on client, passing URL directly", e);
+        }
+      }
+
+      const res = await fetch("/api/gemini/analyze-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Image }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to scan image");
+      }
+
+      const data = await res.json();
+      if (data.title || data.category) {
+        setPortfolioForm(prev => ({
+          ...prev,
+          title: data.title || prev.title,
+          category: data.category || prev.category
+        }));
+        setAiScanResult({
+          visualAudit: data.visualAudit,
+          criticalCheck: data.criticalCheck
+        });
+        triggerToast(`AI Auto-Filled: "${data.title}" in ${data.category}`);
+      } else {
+        triggerToast("AI couldn't generate a clear title or category.");
+      }
+    } catch (err: any) {
+      console.error("AI Analysis error:", err);
+      triggerToast(`AI Analysis failed: ${err.message || err}`);
+    } finally {
+      setAiAnalyzing(false);
+    }
+  };
+
+  const analyzeSpotlightImage = async (imageSrc: string) => {
+    if (!imageSrc) return;
+    setSpotlightAiAnalyzing(true);
+    setSpotlightAiScanResult(null);
+    triggerToast("AI is scanning and analyzing the spotlight image...");
+
+    try {
+      let base64Image = imageSrc;
+
+      if (!imageSrc.startsWith('data:')) {
+        try {
+          const response = await fetch(imageSrc);
+          const blob = await response.blob();
+          base64Image = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn("Could not convert spotlight image URL to base64 on client, passing URL directly", e);
+        }
+      }
+
+      const res = await fetch("/api/gemini/analyze-spotlight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Image }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to scan spotlight image");
+      }
+
+      const data = await res.json();
+      if (data.title || data.category) {
+        setSpotlightForm({
+          title: data.title || '',
+          category: data.category || '',
+          tagline: data.tagline || '',
+          description: data.description || '',
+          technicalSpecs: data.technicalSpecs || '',
+          imageUrl: imageSrc
+        });
+        setSpotlightAiScanResult({
+          visualAudit: data.visualAudit,
+          criticalCheck: data.criticalCheck
+        });
+        triggerToast(`AI Auto-Filled Spotlight: "${data.title}" in ${data.category}`);
+      } else {
+        triggerToast("AI couldn't generate spotlight content.");
+      }
+    } catch (err: any) {
+      console.error("AI Spotlight Analysis error:", err);
+      triggerToast(`AI Spotlight Analysis failed: ${err.message || err}`);
+    } finally {
+      setSpotlightAiAnalyzing(false);
+    }
+  };
 
   // Media Library states
   const [editingMedia, setEditingMedia] = useState<{ id: string; url: string; name: string; size: string; folder: string } | null>(null);
@@ -172,10 +316,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [activeMediaFolder, setActiveMediaFolder] = useState('Weddings');
   const [mediaItems, setMediaItems] = useState<{ id: string; url: string; name: string; size: string; folder: string }[]>(() => {
     return getFromDB<{ id: string; url: string; name: string; size: string; folder: string }[]>('olamide_visuals_media', [
-      { id: 'm-1', url: '/src/assets/images/wedding_cinematic_1782327639845.jpg', name: 'wedding_cinematic_raw.jpg', size: '2.4 MB', folder: 'Weddings' },
-      { id: 'm-2', url: '/src/assets/images/fashion_editorial_1782327653048.jpg', name: 'fashion_editorial_close.jpg', size: '1.8 MB', folder: 'Fashion' },
-      { id: 'm-3', url: '/src/assets/images/graduation_portrait_1782327668134.jpg', name: 'graduation_studio_cap.jpg', size: '3.1 MB', folder: 'Graduation' },
-      { id: 'm-4', url: '/src/assets/images/photographer_portrait_1782327683000.jpg', name: 'olamide_holding_aperture.jpg', size: '1.2 MB', folder: 'Behind The Scenes' }
+      { id: 'm-1', url: 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80', name: 'wedding_timeless_moment.jpg', size: '2.4 MB', folder: 'Weddings' },
+      { id: 'm-2', url: 'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80', name: 'fashion_editorial_studio.jpg', size: '1.8 MB', folder: 'Fashion' },
+      { id: 'm-3', url: 'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=1200&q=80', name: 'graduation_studio_ceremony.jpg', size: '3.1 MB', folder: 'Graduation' },
+      { id: 'm-4', url: 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80', name: 'behind_the_scenes_action.jpg', size: '1.2 MB', folder: 'Behind The Scenes' }
     ]);
   });
 
@@ -238,6 +382,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     // Front-end dynamic variables
     const localServices = getFromDB<Service[]>('olamide_visuals_services', []);
     const localPortfolio = getFromDB<PortfolioItem[]>('olamide_visuals_portfolio_items', PORTFOLIO_ITEMS);
+    const localInstagram = getFromDB<{ id: string; imageUrl: string; likes: string; comments: string }[]>('olamide_visuals_instagram_posts', []);
+    const localSpotlight = getFromDB<SpotlightItem[]>('olamide_visuals_spotlight', []);
 
     setBookings(b);
     setCrew(c);
@@ -250,6 +396,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setMaintenanceMode(cnt?.settings?.maintenanceMode || false);
     setServices(localServices);
     setPortfolioItems(localPortfolio);
+    setInstagramPosts(localInstagram);
+    setSpotlightItems(localSpotlight);
 
     // Set Security settings states
     setHiddenAccessEnabled(has.enabled);
@@ -269,12 +417,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       const freshCrew = getFromDB<CrewMember[]>('olamide_visuals_crew', []);
       const freshProfile = getFromDB<AdminProfile>('olamide_visuals_admin', {} as AdminProfile);
       const freshMedia = getFromDB<{ id: string; url: string; name: string; size: string; folder: string }[]>('olamide_visuals_media', [
-        { id: 'm-1', url: '/src/assets/images/wedding_cinematic_1782327639845.jpg', name: 'wedding_cinematic_raw.jpg', size: '2.4 MB', folder: 'Weddings' },
-        { id: 'm-2', url: '/src/assets/images/fashion_editorial_1782327653048.jpg', name: 'fashion_editorial_close.jpg', size: '1.8 MB', folder: 'Fashion' },
-        { id: 'm-3', url: '/src/assets/images/graduation_portrait_1782327668134.jpg', name: 'graduation_studio_cap.jpg', size: '3.1 MB', folder: 'Graduation' },
-        { id: 'm-4', url: '/src/assets/images/photographer_portrait_1782327683000.jpg', name: 'olamide_holding_aperture.jpg', size: '1.2 MB', folder: 'Behind The Scenes' }
+        { id: 'm-1', url: 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80', name: 'wedding_timeless_moment.jpg', size: '2.4 MB', folder: 'Weddings' },
+        { id: 'm-2', url: 'https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80', name: 'fashion_editorial_studio.jpg', size: '1.8 MB', folder: 'Fashion' },
+        { id: 'm-3', url: 'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=1200&q=80', name: 'graduation_studio_ceremony.jpg', size: '3.1 MB', folder: 'Graduation' },
+        { id: 'm-4', url: 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80', name: 'behind_the_scenes_action.jpg', size: '1.2 MB', folder: 'Behind The Scenes' }
       ]);
       const freshVisitors = Number(localStorage.getItem('olamide_visuals_visitors') || '1452');
+      const freshInstagram = getFromDB<{ id: string; imageUrl: string; likes: string; comments: string }[]>('olamide_visuals_instagram_posts', []);
+      const freshSpotlight = getFromDB<SpotlightItem[]>('olamide_visuals_spotlight', []);
 
       // Update state if they differ to avoid excessive re-renders
       setBookings(prev => JSON.stringify(prev) !== JSON.stringify(freshBookings) ? freshBookings : prev);
@@ -286,6 +436,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       setProfile(prev => prev && JSON.stringify(prev) !== JSON.stringify(freshProfile) ? freshProfile : prev);
       setMediaItems(prev => JSON.stringify(prev) !== JSON.stringify(freshMedia) ? freshMedia : prev);
       setVisitors(prev => prev !== freshVisitors ? freshVisitors : prev);
+      setInstagramPosts(prev => JSON.stringify(prev) !== JSON.stringify(freshInstagram) ? freshInstagram : prev);
+      setSpotlightItems(prev => JSON.stringify(prev) !== JSON.stringify(freshSpotlight) ? freshSpotlight : prev);
     };
 
     window.addEventListener('storage', syncDatabaseRealtime);
@@ -373,11 +525,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       }
 
       const reader = new FileReader();
-      reader.onload = (e) => {
-        const base64Url = e.target?.result as string;
-        if (base64Url) {
-          const sizeKb = Math.round(file.size / 1024);
-          const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+      reader.onload = async (e) => {
+        const rawBase64 = e.target?.result as string;
+        if (rawBase64) {
+          const base64Url = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+          const approxSizeKb = Math.round((base64Url.length * 3) / 4 / 1024);
+          const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
           
           const newItem = {
             id: `m-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -441,6 +594,143 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const syncPortfolio = (updated: PortfolioItem[]) => {
     setPortfolioItems(updated);
     saveToDB('olamide_visuals_portfolio_items', updated);
+  };
+
+  const syncInstagramPosts = (updated: { id: string; imageUrl: string; likes: string; comments: string }[]) => {
+    setInstagramPosts(updated);
+    saveToDB('olamide_visuals_instagram_posts', updated);
+  };
+
+  const handleIgImageUpload = (file: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      triggerToast('Error: File must be an image.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      triggerToast('Error: Image size must be less than 10MB.');
+      return;
+    }
+    setUploadingIg(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const rawBase64 = e.target?.result as string;
+      if (rawBase64) {
+        try {
+          const base64Url = await compressImageBase64(rawBase64, 1000, 1000, 0.75);
+          setInstagramForm(prev => ({ ...prev, imageUrl: base64Url }));
+          triggerToast("Image compressed and loaded successfully!");
+        } catch (err) {
+          console.error("Compression error:", err);
+          triggerToast("Failed to process image.");
+        }
+      }
+      setUploadingIg(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePublishInstagram = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!instagramForm.imageUrl) {
+      triggerToast("Please upload or select an image first.");
+      return;
+    }
+    const likesVal = instagramForm.likes.trim() || `${(Math.random() * 2 + 1).toFixed(1)}k`;
+    const commentsVal = instagramForm.comments.trim() || `${Math.floor(Math.random() * 80 + 20)}`;
+
+    const newPost = {
+      id: `ig-${Date.now()}`,
+      imageUrl: instagramForm.imageUrl,
+      likes: likesVal,
+      comments: commentsVal
+    };
+
+    const updated = [newPost, ...instagramPosts];
+    syncInstagramPosts(updated);
+    logAdminAction(`Published a fresh curated portrait to the Instagram Journal Feed`, 'portfolio');
+
+    setInstagramForm({ imageUrl: '', likes: '', comments: '' });
+    triggerToast("Instagram Journal post published successfully!");
+  };
+
+  const handleDeleteInstagramPost = (id: string) => {
+    const updated = instagramPosts.filter(p => p.id !== id);
+    syncInstagramPosts(updated);
+    logAdminAction(`Permanently deleted Instagram Journal post reference: ${id}`, 'portfolio');
+    triggerToast("Instagram Journal post deleted.");
+  };
+
+  const syncSpotlightItems = (updated: SpotlightItem[]) => {
+    setSpotlightItems(updated);
+    saveToDB('olamide_visuals_spotlight', updated);
+  };
+
+  const handleSpotlightImageUpload = (file: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      triggerToast('Error: File must be an image.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      triggerToast('Error: Image size must be less than 10MB.');
+      return;
+    }
+    setUploadingSpotlight(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const rawBase64 = e.target?.result as string;
+      if (rawBase64) {
+        try {
+          const base64Url = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+          setSpotlightForm(prev => ({ ...prev, imageUrl: base64Url }));
+          triggerToast("Spotlight image loaded and compressed successfully!");
+          // Automatically scan the uploaded spotlight image
+          analyzeSpotlightImage(base64Url);
+        } catch (err) {
+          console.error("Compression error:", err);
+          triggerToast("Failed to process image.");
+        }
+      }
+      setUploadingSpotlight(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePublishSpotlight = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!spotlightForm.imageUrl) {
+      triggerToast("Please upload or select an image first.");
+      return;
+    }
+    if (!spotlightForm.title.trim() || !spotlightForm.category.trim() || !spotlightForm.description.trim()) {
+      triggerToast("Title, Category, and Description are required.");
+      return;
+    }
+
+    const newSpotlight: SpotlightItem = {
+      id: `spotlight-${Date.now()}`,
+      title: spotlightForm.title.trim(),
+      category: spotlightForm.category.trim(),
+      tagline: spotlightForm.tagline.trim(),
+      description: spotlightForm.description.trim(),
+      imageUrl: spotlightForm.imageUrl,
+      technicalSpecs: spotlightForm.technicalSpecs.trim() || 'Custom Shot • f/1.4'
+    };
+
+    const updated = [newSpotlight, ...spotlightItems];
+    syncSpotlightItems(updated);
+    logAdminAction(`Published a new cinematic spotlight series: ${newSpotlight.title}`, 'portfolio');
+
+    setSpotlightForm({ title: '', category: '', tagline: '', description: '', imageUrl: '', technicalSpecs: '' });
+    triggerToast("Cinematic Spotlight published successfully!");
+  };
+
+  const handleDeleteSpotlightItem = (id: string) => {
+    const updated = spotlightItems.filter(item => item.id !== id);
+    syncSpotlightItems(updated);
+    logAdminAction(`Permanently deleted spotlight item: ${id}`, 'portfolio');
+    triggerToast("Spotlight item deleted.");
   };
 
   // ---------------- BOOKING ACTIONS ----------------
@@ -531,7 +821,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       id: `port-${Date.now()}`,
       title: portfolioForm.title || 'Masterwork Portrait',
       category: portfolioForm.category || 'Portraits',
-      imageUrl: portfolioForm.imageUrl || '/src/assets/images/wedding_cinematic_1782327639845.jpg',
+      imageUrl: portfolioForm.imageUrl || 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80',
       description: portfolioForm.description || 'Editorial captured under professional studio conditions.',
       aspect: portfolioForm.aspect || 'portrait',
       location: portfolioForm.location || 'Ekpoma, Edo State',
@@ -647,9 +937,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const base64Url = e.target?.result as string;
-      if (base64Url && profile) {
+    reader.onload = async (e) => {
+      const rawBase64 = e.target?.result as string;
+      if (rawBase64 && profile) {
+        const base64Url = await compressImageBase64(rawBase64, 400, 400, 0.8);
         const updated = {
           ...profile,
           avatarUrl: base64Url
@@ -1020,6 +1311,32 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <span>Media Library</span>
                 </span>
                 <ChevronRight className={`w-3.5 h-3.5 ${activeTab === 'media' ? 'opacity-100' : 'opacity-0'}`} />
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('instagram')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-mono tracking-wider uppercase transition-colors rounded-none cursor-pointer ${
+                  activeTab === 'instagram' ? 'bg-[#0F0F0F] text-gold border-l-2 border-gold' : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span className="flex items-center space-x-2.5">
+                  <Instagram className="w-4 h-4" />
+                  <span>Instagram Journal</span>
+                </span>
+                <ChevronRight className={`w-3.5 h-3.5 ${activeTab === 'instagram' ? 'opacity-100' : 'opacity-0'}`} />
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('spotlight')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-mono tracking-wider uppercase transition-colors rounded-none cursor-pointer ${
+                  activeTab === 'spotlight' ? 'bg-[#0F0F0F] text-gold border-l-2 border-gold' : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span className="flex items-center space-x-2.5">
+                  <Sparkles className="w-4 h-4" />
+                  <span>Cinematic Spotlight</span>
+                </span>
+                <ChevronRight className={`w-3.5 h-3.5 ${activeTab === 'spotlight' ? 'opacity-100' : 'opacity-0'}`} />
               </button>
             </div>
 
@@ -2416,9 +2733,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                 const file = e.target.files?.[0];
                                 if (file) {
                                   const reader = new FileReader();
-                                  reader.onload = (event) => {
-                                    const base64 = event.target?.result as string;
-                                    if (base64) {
+                                  reader.onload = async (event) => {
+                                    const rawBase64 = event.target?.result as string;
+                                    if (rawBase64) {
+                                      const base64 = await compressImageBase64(rawBase64, 800, 800, 0.75);
                                       const urlInput = document.getElementById('about-image-input') as HTMLInputElement;
                                       if (urlInput) {
                                         urlInput.value = base64;
@@ -2427,7 +2745,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                       if (imgPreview) {
                                         imgPreview.src = base64;
                                       }
-                                      triggerToast("Local profile file loaded successfully!");
+                                      triggerToast("Local profile file loaded and compressed successfully!");
                                     }
                                   };
                                   reader.readAsDataURL(file);
@@ -2475,7 +2793,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       <div className="aspect-[4/5] bg-black border border-white/5 flex items-center justify-center overflow-hidden relative group max-w-[180px]">
                         <img 
                           id="about-image-preview" 
-                          src={content?.about?.profileImage || '/src/assets/images/photographer_portrait_1782327683000.jpg'} 
+                          src={content?.about?.profileImage || 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80'} 
                           alt="Artist Portrait Preview" 
                           className="w-full h-full object-cover"
                           onError={(e) => {
@@ -2977,6 +3295,402 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             </div>
           )}
 
+          {/* TAB 18: INSTAGRAM JOURNAL */}
+          {activeTab === 'instagram' && (
+            <div className="space-y-6 animate-fade-in">
+              <div>
+                <h2 className="text-2xl font-serif text-white uppercase tracking-wider">Instagram Journal Feed</h2>
+                <p className="text-xs text-zinc-500 font-mono mt-1">CURATE EXCLUSIVE, COGNITIVE VISUAL STORIES DIRECTLY ONTO OUR MAIN HOMEPAGE JOURNAL</p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Form column */}
+                <div className="lg:col-span-1 bg-[#080808] border border-white/5 p-6 space-y-6 self-start">
+                  <div className="space-y-1 border-b border-white/5 pb-4">
+                    <h3 className="text-sm font-bold text-white uppercase font-mono">Publish Journal Post</h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">UPLOAD A PHOTOGRAPHIC MASTERWORK TO THE INSTAGRAM JOURNAL GRID</p>
+                  </div>
+
+                  <form onSubmit={handlePublishInstagram} className="space-y-4">
+                    {/* Drag and Drop / Upload Box */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Post Image</label>
+                      
+                      <div 
+                        onClick={() => document.getElementById('instagram-file-input')?.click()}
+                        className="aspect-square bg-black border border-dashed border-white/10 hover:border-gold/50 transition-colors flex flex-col items-center justify-center p-4 text-center cursor-pointer relative group overflow-hidden"
+                      >
+                        {instagramForm.imageUrl ? (
+                          <>
+                            <img 
+                              src={instagramForm.imageUrl} 
+                              alt="Upload Preview" 
+                              className="absolute inset-0 w-full h-full object-cover group-hover:opacity-40 transition-opacity" 
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 text-white font-mono text-[10px] uppercase">
+                              Change Image
+                            </div>
+                          </>
+                        ) : (
+                          <div className="space-y-2 flex flex-col items-center justify-center">
+                            <Upload className={`w-8 h-8 text-zinc-600 group-hover:text-gold transition-colors ${uploadingIg ? 'animate-bounce' : ''}`} />
+                            <p className="text-[10px] text-zinc-400 font-mono uppercase">Click to browse or drop photo here</p>
+                            <p className="text-[8px] text-zinc-600 font-mono">PNG, JPG or WEBP up to 10MB</p>
+                          </div>
+                        )}
+                      </div>
+
+                      <input 
+                        type="file" 
+                        id="instagram-file-input" 
+                        className="hidden" 
+                        accept="image/*"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleIgImageUpload(e.target.files[0]);
+                          }
+                        }}
+                      />
+                    </div>
+
+                    {/* Likes & Comments simulation */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Likes Count</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 1.2k"
+                          value={instagramForm.likes}
+                          onChange={(e) => setInstagramForm(prev => ({ ...prev, likes: e.target.value }))}
+                          className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Comments</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 48"
+                          value={instagramForm.comments}
+                          onChange={(e) => setInstagramForm(prev => ({ ...prev, comments: e.target.value }))}
+                          className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={uploadingIg || !instagramForm.imageUrl}
+                      className="w-full py-3 bg-gold text-black font-mono text-xs tracking-widest font-bold uppercase transition-all flex items-center justify-center space-x-2 disabled:bg-zinc-800 disabled:text-zinc-500 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{uploadingIg ? 'PROCESSING...' : 'PUBLISH TO JOURNAL'}</span>
+                    </button>
+                  </form>
+                </div>
+
+                {/* Grid column */}
+                <div className="lg:col-span-2 bg-[#080808] border border-white/5 p-6 space-y-6">
+                  <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase font-mono">Active Feed Grid</h3>
+                      <p className="text-[10px] text-zinc-500 font-mono">LIVE VISUAL CHRONOLOGY DISPLAYED ON HOMEPAGE</p>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-400 px-2 py-0.5 bg-zinc-900 border border-white/5 rounded">
+                      {instagramPosts.length} posts
+                    </span>
+                  </div>
+
+                  {instagramPosts.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                      {instagramPosts.map((post) => (
+                        <div 
+                          key={post.id} 
+                          className="group relative bg-black border border-white/5 aspect-square overflow-hidden flex flex-col justify-between"
+                        >
+                          <img 
+                            src={post.imageUrl} 
+                            alt="Instagram Post" 
+                            className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                          />
+                          
+                          {/* Top Tag & Delete Button overlay */}
+                          <div className="absolute top-2 right-2 flex space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                            <button
+                              onClick={() => handleDeleteInstagramPost(post.id)}
+                              className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded transition-colors shadow-lg cursor-pointer"
+                              title="Delete Post"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Stats Info Overlay */}
+                          <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-4 text-white">
+                            <div className="flex items-center space-x-1">
+                              <Heart className="w-3.5 h-3.5 text-red-500 fill-current" />
+                              <span className="text-xs font-mono font-semibold">{post.likes}</span>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              <MessageCircle className="w-3.5 h-3.5 text-gold fill-current" />
+                              <span className="text-xs font-mono font-semibold">{post.comments}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-20 border border-dashed border-white/5 rounded bg-black/40 flex flex-col items-center justify-center space-y-3">
+                      <Instagram className="w-10 h-10 text-zinc-600 animate-pulse" />
+                      <div className="space-y-1">
+                        <p className="text-sm text-zinc-400 font-mono uppercase">Journal grid is empty</p>
+                        <p className="text-xs text-zinc-600 max-w-xs mx-auto">Upload your first exclusive shoot on the left to activate follow-grid curation on the main website.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 19: CINEMATIC SPOTLIGHT */}
+          {activeTab === 'spotlight' && (
+            <div className="space-y-6 animate-fade-in">
+              <div>
+                <h2 className="text-2xl font-serif text-white uppercase tracking-wider">Cinematic Spotlight Showcase</h2>
+                <p className="text-xs text-zinc-500 font-mono mt-1">CONSTRUCT AND DIRECT EXCLUSIVE STORYBOARDS TO HIGHLIGHT PHOTOGRAPHIC EXCELLENCE</p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Form column */}
+                <div className="lg:col-span-5 bg-[#080808] border border-white/5 p-6 space-y-6 self-start">
+                  <div className="space-y-1 border-b border-white/5 pb-4">
+                    <h3 className="text-sm font-bold text-white uppercase font-mono">Publish Spotlight Story</h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">UPLOAD A CINEMATIC MASTERWORK AND DESIGN ITS ACCOMPANYING OVERLAY</p>
+                  </div>
+
+                  <form onSubmit={handlePublishSpotlight} className="space-y-4">
+                    {/* Drag and Drop / Upload Box */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Story Image</label>
+                        {spotlightForm.imageUrl && (
+                          <button
+                            type="button"
+                            disabled={spotlightAiAnalyzing}
+                            onClick={() => analyzeSpotlightImage(spotlightForm.imageUrl)}
+                            className="text-gold hover:text-white flex items-center space-x-1 cursor-pointer disabled:opacity-50 text-[10px] font-mono uppercase tracking-wider"
+                            title="Analyze this image using Gemini AI to automatically generate spotlight information"
+                          >
+                            <Sparkles className={`w-3 h-3 ${spotlightAiAnalyzing ? 'animate-spin' : ''}`} />
+                            <span>{spotlightAiAnalyzing ? 'AI Scanning...' : 'Scan with Gemini AI'}</span>
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div 
+                        onClick={() => document.getElementById('spotlight-file-input')?.click()}
+                        className="aspect-[16/10] bg-black border border-dashed border-white/10 hover:border-gold/50 transition-colors flex flex-col items-center justify-center p-4 text-center cursor-pointer relative group overflow-hidden"
+                      >
+                        {spotlightForm.imageUrl ? (
+                          <>
+                            <img 
+                              src={spotlightForm.imageUrl} 
+                              alt="Upload Preview" 
+                              className="absolute inset-0 w-full h-full object-cover group-hover:opacity-40 transition-opacity" 
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 text-white font-mono text-[10px] uppercase">
+                              Change Image
+                            </div>
+                          </>
+                        ) : (
+                          <div className="space-y-2 flex flex-col items-center justify-center">
+                            <Upload className={`w-8 h-8 text-zinc-600 group-hover:text-gold transition-colors ${uploadingSpotlight ? 'animate-bounce' : ''}`} />
+                            <p className="text-[10px] text-zinc-400 font-mono uppercase">Click to browse or drop story photo</p>
+                            <p className="text-[8px] text-zinc-600 font-mono">PNG, JPG or WEBP up to 10MB</p>
+                          </div>
+                        )}
+                      </div>
+
+                      <input 
+                        type="file" 
+                        id="spotlight-file-input" 
+                        className="hidden" 
+                        accept="image/*"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleSpotlightImageUpload(e.target.files[0]);
+                          }
+                        }}
+                      />
+
+                      {spotlightForm.imageUrl && spotlightForm.imageUrl.startsWith('data:') && (
+                        <p className="text-[10px] text-gold font-mono flex items-center space-x-1 mt-1">
+                          <span>✓ Base64 Local File Loaded</span>
+                          {spotlightAiAnalyzing && <span className="animate-pulse">(AI is auto-generating details...)</span>}
+                        </p>
+                      )}
+                    </div>
+
+                    {spotlightAiScanResult && (
+                      <div className="p-3 bg-zinc-950 border border-gold/20 text-[10px] space-y-2 font-mono leading-relaxed transition-all duration-300">
+                        <div className="flex items-center space-x-1.5 text-gold font-bold uppercase tracking-wider text-[9px]">
+                          <Sparkles className="w-3.5 h-3.5 text-gold animate-pulse" />
+                          <span>Gemini AI Cinematic Audit Report</span>
+                        </div>
+                        <div className="space-y-1.5 border-t border-white/5 pt-2">
+                          <div>
+                            <span className="text-zinc-500 block uppercase text-[8px] tracking-wide font-bold">Visual Scan Audit:</span>
+                            <span className="text-zinc-200">{spotlightAiScanResult.visualAudit}</span>
+                          </div>
+                          <div>
+                            <span className="text-zinc-500 block uppercase text-[8px] tracking-wide font-bold">Critical Verification Check:</span>
+                            <span className="text-gold bg-gold/5 px-1.5 py-0.5 rounded border border-gold/10 inline-block font-medium mt-0.5">{spotlightAiScanResult.criticalCheck}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Story Title *</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. The Grace of Melanin"
+                        required
+                        value={spotlightForm.title}
+                        onChange={(e) => setSpotlightForm(prev => ({ ...prev, title: e.target.value }))}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Category *</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. EDITORIAL PORTRAIT"
+                          required
+                          value={spotlightForm.category}
+                          onChange={(e) => setSpotlightForm(prev => ({ ...prev, category: e.target.value }))}
+                          className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Technical Specs</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Sony α7R V • 85mm f/1.2"
+                          value={spotlightForm.technicalSpecs}
+                          onChange={(e) => setSpotlightForm(prev => ({ ...prev, technicalSpecs: e.target.value }))}
+                          className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Tagline</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Illuminating raw tones and textured shadow lines."
+                        value={spotlightForm.tagline}
+                        onChange={(e) => setSpotlightForm(prev => ({ ...prev, tagline: e.target.value }))}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Creative Description *</label>
+                      <textarea
+                        placeholder="Detail the creative philosophy, environment setup, and narrative backstory..."
+                        required
+                        rows={3}
+                        value={spotlightForm.description}
+                        onChange={(e) => setSpotlightForm(prev => ({ ...prev, description: e.target.value }))}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold resize-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={uploadingSpotlight || !spotlightForm.imageUrl}
+                      className="w-full py-3 bg-gold text-black font-mono text-xs tracking-widest font-bold uppercase transition-all flex items-center justify-center space-x-2 disabled:bg-zinc-800 disabled:text-zinc-500 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{uploadingSpotlight ? 'PROCESSING...' : 'PUBLISH TO SPOTLIGHT'}</span>
+                    </button>
+                  </form>
+                </div>
+
+                {/* Grid column */}
+                <div className="lg:col-span-7 bg-[#080808] border border-white/5 p-6 space-y-6">
+                  <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase font-mono">Active Showcase Carousel</h3>
+                      <p className="text-[10px] text-zinc-500 font-mono">LIVE SEQUENTIAL REEL DISPLAYED ON HOMEPAGE SPOTLIGHT</p>
+                    </div>
+                    <span className="text-[10px] font-mono text-gold px-2 py-0.5 bg-gold/5 border border-gold/10 rounded">
+                      {spotlightItems.length} active
+                    </span>
+                  </div>
+
+                  {spotlightItems.length > 0 ? (
+                    <div className="space-y-4">
+                      {spotlightItems.map((story) => (
+                        <div 
+                          key={story.id} 
+                          className="group relative bg-black border border-white/5 p-4 flex flex-col md:flex-row gap-4 items-center justify-between"
+                        >
+                          <div className="flex items-center space-x-4 w-full md:w-auto">
+                            <img 
+                              src={story.imageUrl} 
+                              alt={story.title} 
+                              className="w-20 h-16 object-cover border border-white/10 shrink-0" 
+                            />
+                            <div className="min-w-0">
+                              <span className="text-[9px] font-mono tracking-widest text-gold uppercase block leading-none mb-1">
+                                {story.category}
+                              </span>
+                              <h4 className="text-sm font-bold text-white uppercase truncate font-serif leading-tight">
+                                {story.title}
+                              </h4>
+                              {story.tagline && (
+                                <p className="text-[10px] font-mono text-zinc-400 truncate mt-0.5">
+                                  "{story.tagline}"
+                                </p>
+                              )}
+                              <p className="text-[9px] font-mono text-zinc-600 mt-1">
+                                {story.technicalSpecs}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-2 shrink-0 self-end md:self-center">
+                            <button
+                              onClick={() => handleDeleteSpotlightItem(story.id)}
+                              className="p-2 bg-red-600/10 hover:bg-red-600 border border-red-600/20 hover:border-red-600 text-red-500 hover:text-white rounded transition-all duration-300 cursor-pointer"
+                              title="Delete Story"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-20 border border-dashed border-white/5 rounded bg-black/40 flex flex-col items-center justify-center space-y-3">
+                      <Sparkles className="w-10 h-10 text-zinc-600 animate-pulse" />
+                      <div className="space-y-1">
+                        <p className="text-sm text-zinc-400 font-mono uppercase">Spotlight carousel is empty</p>
+                        <p className="text-xs text-zinc-600 max-w-xs mx-auto">Create and publish your first custom cinematic masterpiece on the left to activate the homepage storyteller spotlight.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
 
       </main>
@@ -3181,33 +3895,67 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             <form onSubmit={handleCreatePortfolio} className="space-y-4 text-xs font-mono">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-zinc-500">Artwork Title</label>
-                  <input type="text" required onChange={(e) => setPortfolioForm({...portfolioForm, title: e.target.value})} className="w-full px-3 py-2 bg-black border border-white/10 text-white" />
+                  <div className="flex justify-between items-center">
+                    <label className="text-zinc-500">Artwork Title</label>
+                    {aiAnalyzing && (
+                      <span className="text-[9px] text-gold animate-pulse font-mono flex items-center space-x-1">
+                        <Sparkles className="w-2.5 h-2.5 animate-spin" />
+                        <span>AI Generating...</span>
+                      </span>
+                    )}
+                  </div>
+                  <input 
+                    type="text" 
+                    required 
+                    value={portfolioForm.title || ''} 
+                    onChange={(e) => setPortfolioForm({...portfolioForm, title: e.target.value})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-zinc-500">Portfolio Category</label>
-                  <select onChange={(e) => setPortfolioForm({...portfolioForm, category: e.target.value})} className="w-full px-3 py-2 bg-black border border-white/10 text-white">
+                  <select 
+                    value={portfolioForm.category || 'Weddings'} 
+                    onChange={(e) => setPortfolioForm({...portfolioForm, category: e.target.value})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors"
+                  >
                     <option value="Weddings">Weddings</option>
                     <option value="Portraits">Portraits</option>
                     <option value="Fashion">Fashion</option>
                     <option value="Graduation">Graduation</option>
+                    <option value="Behind The Scenes">Behind The Scenes</option>
                   </select>
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-zinc-500 block">Artwork Image URL / Direct Upload</label>
-                <div className="flex gap-2 items-center">
+                <div className="flex justify-between items-center">
+                  <label className="text-zinc-500 block">Artwork Image URL / Direct Upload</label>
+                  {portfolioForm.imageUrl && (
+                    <button
+                      type="button"
+                      disabled={aiAnalyzing}
+                      onClick={() => analyzePortfolioImage(portfolioForm.imageUrl!)}
+                      className="text-gold hover:text-white flex items-center space-x-1 cursor-pointer disabled:opacity-50 text-[10px]"
+                      title="Analyze this image using Gemini AI to generate title and category"
+                    >
+                      <Sparkles className={`w-3 h-3 ${aiAnalyzing ? 'animate-spin' : ''}`} />
+                      <span>{aiAnalyzing ? 'AI Scanning...' : 'Scan with Gemini AI'}</span>
+                    </button>
+                  )}
+                </div>
+                <div className={`flex gap-2 items-center p-1 rounded transition-all duration-300 ${aiAnalyzing ? 'border border-gold/40 shadow-[0_0_15px_rgba(212,175,55,0.15)] bg-gold/[0.01]' : ''}`}>
                   <input 
                     type="text" 
                     value={portfolioForm.imageUrl || ''} 
                     required 
                     onChange={(e) => setPortfolioForm({...portfolioForm, imageUrl: e.target.value})} 
-                    className="flex-1 px-3 py-2 bg-black border border-white/10 text-white" 
+                    className="flex-1 px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
                     placeholder="Enter image URL or upload file"
                   />
-                  <label className="px-3 py-2 bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer font-mono text-[10px] uppercase tracking-wider whitespace-nowrap">
-                    Upload File
+                  <label className="px-3 py-2 bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer font-mono text-[10px] uppercase tracking-wider whitespace-nowrap flex items-center space-x-1">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload File</span>
                     <input 
                       type="file" 
                       accept="image/*" 
@@ -3215,24 +3963,49 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            const base64 = event.target?.result as string;
-                            if (base64) {
-                              setPortfolioForm(prev => ({ ...prev, imageUrl: base64 }));
-                              triggerToast("Local file loaded successfully!");
-                            }
-                          };
-                          reader.readAsDataURL(file);
+                           const reader = new FileReader();
+                           reader.onload = async (event) => {
+                             const rawBase64 = event.target?.result as string;
+                             if (rawBase64) {
+                               const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+                               setPortfolioForm(prev => ({ ...prev, imageUrl: base64 }));
+                               triggerToast("Local file loaded and compressed successfully!");
+                               // Automatically scan whenever a file is uploaded!
+                               analyzePortfolioImage(base64);
+                             }
+                           };
+                           reader.readAsDataURL(file);
                         }
                       }}
                     />
                   </label>
                 </div>
                 {portfolioForm.imageUrl && portfolioForm.imageUrl.startsWith('data:') && (
-                  <p className="text-[10px] text-gold font-mono">✓ Base64 Local File Loaded</p>
+                  <p className="text-[10px] text-gold font-mono flex items-center space-x-1">
+                    <span>✓ Base64 Local File Loaded</span>
+                    {aiAnalyzing && <span className="animate-pulse">(AI is auto-generating title & category...)</span>}
+                  </p>
                 )}
               </div>
+
+              {aiScanResult && (
+                <div className="p-3 bg-zinc-900/60 border border-gold/20 rounded-md text-[10px] space-y-2 font-mono leading-relaxed transition-all duration-300">
+                  <div className="flex items-center space-x-1.5 text-gold font-bold uppercase tracking-wider text-[9px]">
+                    <Sparkles className="w-3.5 h-3.5 text-gold" />
+                    <span>Gemini AI Professional Audit Report</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div>
+                      <span className="text-zinc-500 block uppercase text-[8px] tracking-wide font-bold">Visual Scan Audit:</span>
+                      <span className="text-zinc-200">{aiScanResult.visualAudit}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block uppercase text-[8px] tracking-wide font-bold">Critical Verification Check:</span>
+                      <span className="text-gold bg-gold/5 px-1.5 py-0.5 rounded border border-gold/10 inline-block font-medium mt-0.5">{aiScanResult.criticalCheck}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1.5">
@@ -3253,8 +4026,19 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 </div>
               </div>
 
-              <button type="submit" className="w-full py-3 bg-gold text-black uppercase font-bold text-xs tracking-wider cursor-pointer">
-                Publish Masterwork
+              <button 
+                type="submit" 
+                disabled={aiAnalyzing}
+                className="w-full py-3 bg-gold disabled:bg-zinc-800 disabled:text-zinc-500 text-black uppercase font-bold text-xs tracking-wider cursor-pointer flex items-center justify-center space-x-2 transition-colors"
+              >
+                {aiAnalyzing ? (
+                  <>
+                    <Sparkles className="w-4 h-4 animate-spin text-black" />
+                    <span>AI Analysis in Progress...</span>
+                  </>
+                ) : (
+                  <span>Publish Masterwork</span>
+                )}
               </button>
             </form>
           </motion.div>
@@ -3293,11 +4077,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       if (e.target.files && e.target.files[0]) {
                         const file = e.target.files[0];
                         const reader = new FileReader();
-                        reader.onload = (event) => {
-                          const base64 = event.target?.result as string;
-                          if (base64) {
-                            const sizeKb = Math.round(file.size / 1024);
-                            const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+                        reader.onload = async (event) => {
+                          const rawBase64 = event.target?.result as string;
+                          if (rawBase64) {
+                            const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+                            const approxSizeKb = Math.round((base64.length * 3) / 4 / 1024);
+                            const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
                             const nameInp = document.getElementById('modal-media-name') as HTMLInputElement;
                             if (nameInp && !nameInp.value) {
                               nameInp.value = file.name;
@@ -3424,11 +4209,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       if (e.target.files && e.target.files[0]) {
                         const file = e.target.files[0];
                         const reader = new FileReader();
-                        reader.onload = (event) => {
-                          const base64 = event.target?.result as string;
-                          if (base64) {
-                            const sizeKb = Math.round(file.size / 1024);
-                            const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+                        reader.onload = async (event) => {
+                          const rawBase64 = event.target?.result as string;
+                          if (rawBase64) {
+                            const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+                            const approxSizeKb = Math.round((base64.length * 3) / 4 / 1024);
+                            const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
                             
                             setEditingMedia(prev => prev ? {
                               ...prev,

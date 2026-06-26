@@ -305,7 +305,7 @@ const DEFAULT_CONTENT: WebsiteContent = {
   },
   about: {
     biography: 'Based in Edo State, Olamide Oluwabusayomi is an award-winning creative photographer who synthesizes high-contrast editorial structures with traditional cultural richness. Renowned for meticulous speedlight mastery and emotional visual staging, Olamide Visuals stands as Benin and Ekpoma’s premier agency for weddings, high-concept fashion, and fine-art milestones.',
-    profileImage: '/src/assets/images/photographer_portrait_1782327683000.jpg',
+    profileImage: 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80',
     businessAddress: 'Ekpoma, Edo State, Nigeria'
   },
   branding: {
@@ -329,7 +329,7 @@ const DEFAULT_CONTENT: WebsiteContent = {
     seo: {
       metaTitle: 'Olamide Visuals - Premium Cinematic Photographer in Edo State, Nigeria',
       metaDesc: 'Award-winning wedding, portrait, and fashion photography services in Benin City, Ekpoma, and Nigeria. Preserving luxury milestones with dramatic lighting.',
-      ogImage: '/src/assets/images/wedding_cinematic_1782327639845.jpg'
+      ogImage: 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80'
     },
     payments: {
       paystackEnabled: true,
@@ -427,10 +427,58 @@ export function initDB() {
   if (!localStorage.getItem('olamide_visuals_portfolio_items')) {
     localStorage.setItem('olamide_visuals_portfolio_items', JSON.stringify(PORTFOLIO_ITEMS));
   }
+
+  // 11. Instagram Posts
+  if (!localStorage.getItem('olamide_visuals_instagram_posts')) {
+    localStorage.setItem('olamide_visuals_instagram_posts', JSON.stringify([]));
+  }
+
+  // 12. Cinematic Spotlight
+  if (!localStorage.getItem('olamide_visuals_spotlight')) {
+    localStorage.setItem('olamide_visuals_spotlight', JSON.stringify([]));
+  }
 }
 
 // Memory cache fallback for local storage keys to survive QuotaExceededError
 const memoryDbCache: Record<string, any> = {};
+
+export function compressImageBase64(base64Str: string, maxWidth = 1200, maxHeight = 1200, quality = 0.75): Promise<string> {
+  return new Promise((resolve) => {
+    if (!base64Str || !base64Str.startsWith('data:image/')) {
+      resolve(base64Str);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      if (width > maxWidth || height > maxHeight) {
+        if (width > height) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      resolve(base64Str);
+    };
+    img.src = base64Str;
+  });
+}
 
 export const saveToLocalOnly = <T>(key: string, data: T): void => {
   memoryDbCache[key] = data;
@@ -482,6 +530,8 @@ export const saveToDB = <T>(key: string, data: T): void => {
       'olamide_visuals_logs': 'logs',
       'olamide_visuals_portfolio_items': 'portfolio',
       'olamide_visuals_media': 'media',
+      'olamide_visuals_instagram_posts': 'instagram',
+      'olamide_visuals_spotlight': 'spotlight',
     };
 
     if (key === 'olamide_visuals_admin') {
@@ -524,7 +574,9 @@ export const saveToDB = <T>(key: string, data: T): void => {
           'olamide_visuals_transactions',
           'olamide_visuals_logs',
           'olamide_visuals_portfolio_items',
-          'olamide_visuals_media'
+          'olamide_visuals_media',
+          'olamide_visuals_instagram_posts',
+          'olamide_visuals_spotlight'
         ];
 
         if (adminOnlyKeys.includes(key) && !isAdmin) {

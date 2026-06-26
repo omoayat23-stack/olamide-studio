@@ -118,7 +118,9 @@ export function startFirebaseSync(isAdminUser: boolean) {
     { coll: 'portfolio', localKey: 'olamide_visuals_portfolio_items' },
     { coll: 'media', localKey: 'olamide_visuals_media' },
     { coll: 'crew', localKey: 'olamide_visuals_crew' },
-    { coll: 'blog', localKey: 'olamide_visuals_blog' }
+    { coll: 'blog', localKey: 'olamide_visuals_blog' },
+    { coll: 'instagram', localKey: 'olamide_visuals_instagram_posts' },
+    { coll: 'spotlight', localKey: 'olamide_visuals_spotlight' }
   ];
 
   publicCollections.forEach(({ coll, localKey }) => {
