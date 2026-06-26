@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. GLOBAL SAFETY NET (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. GLOBAL HELPERS
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admins include the super-admin email and the system's runtime user
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'shaffieswabstar@gmail.com' ||
+        request.auth.token.email == 'Olamideoluwabusayomi123@gmail.com'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Ensure email is verified for all admin operations
+    function isVerifiedAdmin() {
+      return isAdmin() && request.auth.token.email_verified == true;
+    }
+
+    // 3. VALIDATION SCHEMAS
+
+    // Booking Validation
+    function isValidBooking(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'phone', 'eventType', 'preferredDate', 'createdAt', 'status'])
+        && data.keys().size() <= 9
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100 && data.name.size() > 0
+        && data.email is string && data.email.size() <= 100 && data.email.size() > 0
+        && data.phone is string && data.phone.size() <= 30 && data.phone.size() > 0
+        && data.eventType is string && data.eventType.size() <= 100
+        && data.preferredDate is string && data.preferredDate.size() <= 30
+        && data.createdAt is string && data.createdAt.size() <= 50
+        && (data.status == 'pending' || isVerifiedAdmin());
+    }
+
+    // Message Validation
+    function isValidMessage(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'subject', 'message', 'date', 'status'])
+        && data.keys().size() <= 8
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100 && data.name.size() > 0
+        && data.email is string && data.email.size() <= 100 && data.email.size() > 0
+        && data.subject is string && data.subject.size() <= 200 && data.subject.size() > 0
+        && data.message is string && data.message.size() <= 5000 && data.message.size() > 0
+        && data.date is string && data.date.size() <= 50
+        && (data.status == 'unread' || isVerifiedAdmin());
+    }
+
+    // Portfolio Validation
+    function isValidPortfolio(data) {
+      return data.keys().hasAll(['id', 'title', 'category', 'imageUrl', 'description', 'aspect', 'location', 'year'])
+        && data.keys().size() == 8
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 150
+        && data.category is string && data.category.size() <= 50
+        && data.imageUrl is string && data.imageUrl.size() <= 500
+        && data.description is string && data.description.size() <= 1000
+        && data.aspect is string && (data.aspect == 'portrait' || data.aspect == 'landscape')
+        && data.location is string && data.location.size() <= 100
+        && data.year is string && data.year.size() <= 10;
+    }
+
+    // BlogPost Validation
+    function isValidBlogPost(data) {
+      return data.keys().hasAll(['id', 'title', 'content', 'category', 'tags', 'status', 'publishDate', 'views', 'featured'])
+        && data.keys().size() <= 11
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.content is string && data.content.size() <= 100000
+        && data.category is string && data.category.size() <= 100
+        && data.tags is list && data.tags.size() <= 15
+        && (data.status == 'published' || data.status == 'draft' || data.status == 'scheduled')
+        && data.publishDate is string
+        && data.views is number
+        && data.featured is bool;
+    }
+
+    // MediaItem Validation
+    function isValidMediaItem(data) {
+      return data.keys().hasAll(['id', 'url', 'name', 'size', 'folder'])
+        && data.keys().size() == 5
+        && data.id is string && data.id.size() <= 128
+        && data.url is string && data.url.size() <= 500
+        && data.name is string && data.name.size() <= 200
+        && data.size is string && data.size.size() <= 50
+        && data.folder is string && data.folder.size() <= 100;
+    }
+
+    // CrewMember Validation
+    function isValidCrewMember(data) {
+      return data.keys().hasAll(['id', 'name', 'role', 'photoUrl', 'availability', 'phone', 'email', 'permissions'])
+        && data.keys().size() == 8
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && data.role is string && data.role.size() <= 100
+        && data.photoUrl is string && data.photoUrl.size() <= 500
+        && data.availability is string && (data.availability == 'Available' || data.availability == 'On Assignment' || data.availability == 'Leave')
+        && data.phone is string && data.phone.size() <= 30
+        && data.email is string && data.email.size() <= 100
+        && data.permissions is string && (data.permissions == 'Full Access' || data.permissions == 'View & Shoot Only' || data.permissions == 'Retoucher Access');
+    }
+
+    // Transaction Validation
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['id', 'bookingId', 'clientName', 'amount', 'method', 'status', 'date', 'invoiceNo'])
+        && data.keys().size() == 8
+        && data.id is string && data.id.size() <= 128
+        && data.bookingId is string && data.bookingId.size() <= 128
+        && data.clientName is string && data.clientName.size() <= 100
+        && data.amount is number && data.amount >= 0
+        && data.method is string && (data.method == 'Paystack' || data.method == 'Flutterwave' || data.method == 'Bank Transfer')
+        && data.status is string && (data.status == 'completed' || data.status == 'pending_confirmation' || data.status == 'refunded')
+        && data.date is string
+        && data.invoiceNo is string && data.invoiceNo.size() <= 50;
+    }
+
+    // 4. PATH SPECIFIC RULES
+
+    // Bookings
+    match /bookings/{bookingId} {
+      allow get: if isVerifiedAdmin();
+      allow list: if isVerifiedAdmin();
+      allow create: if isValidId(bookingId) && isValidBooking(incoming());
+      allow update, delete: if isVerifiedAdmin() && isValidId(bookingId) && isValidBooking(incoming());
+    }
+
+    // Contact Messages
+    match /messages/{msgId} {
+      allow get: if isVerifiedAdmin();
+      allow list: if isVerifiedAdmin();
+      allow create: if isValidId(msgId) && isValidMessage(incoming());
+      allow update, delete: if isVerifiedAdmin() && isValidId(msgId) && isValidMessage(incoming());
+    }
+
+    // Portfolio items
+    match /portfolio/{itemId} {
+      allow read: if true;
+      allow create, update, delete: if isVerifiedAdmin() && isValidId(itemId) && isValidPortfolio(incoming());
+    }
+
+    // Media library items
+    match /media/{mediaId} {
+      allow read: if true;
+      allow create, update, delete: if isVerifiedAdmin() && isValidId(mediaId) && isValidMediaItem(incoming());
+    }
+
+    // Crew roster
+    match /crew/{crewId} {
+      allow read: if true;
+      allow create, update, delete: if isVerifiedAdmin() && isValidId(crewId) && isValidCrewMember(incoming());
+    }
+
+    // Blog posts
+    match /blog/{postId} {
+      allow read: if true;
+      allow create, update, delete: if isVerifiedAdmin() && isValidId(postId) && isValidBlogPost(incoming());
+    }
+
+    // Transactions
+    match /transactions/{txId} {
+      allow read, write: if isVerifiedAdmin() && isValidId(txId) && (request.method == 'delete' || isValidTransaction(incoming()));
+    }
+
+    // Website Content and Admin Profiles
+    match /content/{contentId} {
+      allow read: if true;
+      allow write: if isVerifiedAdmin() && isValidId(contentId);
+    }
+
+    match /profile/{profileId} {
+      allow read, write: if isVerifiedAdmin() && isValidId(profileId);
+    }
+
+    // Audit Logs
+    match /logs/{logId} {
+      allow read: if isVerifiedAdmin();
+      allow create: if isVerifiedAdmin() && isValidId(logId);
+      allow update, delete: if false; // Logs are immutable once written!
+    }
+
+    // General Stats
+    match /stats/{statId} {
+      allow read: if true;
+      allow write: if true; // Let public client increment visitors safely
+    }
+  }
+}

@@ -1,0 +1,214 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "Client photo shoot booking details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the booking" },
+        "name": { "type": "string", "description": "Full name of the client" },
+        "email": { "type": "string", "description": "Email address of the client" },
+        "phone": { "type": "string", "description": "Phone number of the client" },
+        "eventType": { "type": "string", "description": "Type of event/shoot (e.g., Portrait, Wedding)" },
+        "preferredDate": { "type": "string", "description": "YYYY-MM-DD format of preferred shoot date" },
+        "message": { "type": "string", "description": "Additional notes or description" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "cancelled"], "description": "Booking status" }
+      },
+      "required": ["id", "name", "email", "phone", "eventType", "preferredDate", "createdAt", "status"]
+    },
+    "CrewMember": {
+      "title": "CrewMember",
+      "description": "Details about a studio crew member",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "availability": { "type": "string", "enum": ["Available", "On Assignment", "Leave"] },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "permissions": { "type": "string", "enum": ["Full Access", "View & Shoot Only", "Retoucher Access"] }
+      },
+      "required": ["id", "name", "role", "photoUrl", "availability", "phone", "email", "permissions"]
+    },
+    "BlogPost": {
+      "title": "BlogPost",
+      "description": "A studio educational or promotional blog post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array" },
+        "status": { "type": "string", "enum": ["published", "draft", "scheduled"] },
+        "publishDate": { "type": "string" },
+        "views": { "type": "number" },
+        "featured": { "type": "boolean" },
+        "seoTitle": { "type": "string" },
+        "seoDesc": { "type": "string" }
+      },
+      "required": ["id", "title", "content", "category", "tags", "status", "publishDate", "views", "featured"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial records of client deposits or bookings payments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["Paystack", "Flutterwave", "Bank Transfer"] },
+        "status": { "type": "string", "enum": ["completed", "pending_confirmation", "refunded"] },
+        "date": { "type": "string" },
+        "invoiceNo": { "type": "string" }
+      },
+      "required": ["id", "bookingId", "clientName", "amount", "method", "status", "date", "invoiceNo"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Client contact or shoot inquiry message",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["unread", "read", "replied", "archived"] },
+        "replyText": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "subject", "message", "date", "status"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "System admin audit trail log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "action": { "type": "string" },
+        "category": { "type": "string", "enum": ["auth", "booking", "portfolio", "blog", "crew", "finance", "settings", "system"] },
+        "user": { "type": "string" },
+        "ip": { "type": "string" },
+        "device": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "action", "category", "user", "ip", "device"]
+    },
+    "AdminProfile": {
+      "title": "AdminProfile",
+      "description": "Studio super-administrator credentials and profile settings",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "twoFactorEnabled": { "type": "boolean" },
+        "twoFactorSecret": { "type": "string" }
+      },
+      "required": ["username", "fullName", "email", "phone", "avatarUrl", "twoFactorEnabled"]
+    },
+    "WebsiteContent": {
+      "title": "WebsiteContent",
+      "description": "Custom editable studio home and settings content",
+      "type": "object",
+      "properties": {
+        "hero": { "type": "object" },
+        "about": { "type": "object" },
+        "branding": { "type": "object" },
+        "settings": { "type": "object" }
+      },
+      "required": ["hero", "about", "branding", "settings"]
+    },
+    "PortfolioItem": {
+      "title": "PortfolioItem",
+      "description": "A showcase portfolio piece",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "aspect": { "type": "string", "enum": ["portrait", "landscape"] },
+        "location": { "type": "string" },
+        "year": { "type": "string" }
+      },
+      "required": ["id", "title", "category", "imageUrl", "description", "aspect", "location", "year"]
+    },
+    "MediaItem": {
+      "title": "MediaItem",
+      "description": "A single raw asset in the media library folders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "url": { "type": "string" },
+        "name": { "type": "string" },
+        "size": { "type": "string" },
+        "folder": { "type": "string" }
+      },
+      "required": ["id", "url", "name", "size", "folder"]
+    },
+    "Visitors": {
+      "title": "Visitors",
+      "description": "Visitor stats tracker",
+      "type": "object",
+      "properties": {
+        "count": { "type": "number" }
+      },
+      "required": ["count"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Client bookings"
+    },
+    "/crew/{crewId}": {
+      "schema": "CrewMember",
+      "description": "Crew member roster"
+    },
+    "/blog/{postId}": {
+      "schema": "BlogPost",
+      "description": "Blog posts and tutorials"
+    },
+    "/transactions/{txId}": {
+      "schema": "Transaction",
+      "description": "Studio financial transactions and bookings income"
+    },
+    "/messages/{msgId}": {
+      "schema": "ContactMessage",
+      "description": "Client incoming inquiries and messages"
+    },
+    "/logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Studio administration audit logs"
+    },
+    "/profile/{profileId}": {
+      "schema": "AdminProfile",
+      "description": "Super admin profile metadata"
+    },
+    "/content/{contentId}": {
+      "schema": "WebsiteContent",
+      "description": "Dynamic homepage hero, biography, and general branding configuration"
+    },
+    "/portfolio/{itemId}": {
+      "schema": "PortfolioItem",
+      "description": "Premium curated portfolio grid pictures"
+    },
+    "/media/{mediaId}": {
+      "schema": "MediaItem",
+      "description": "Raw upload assets within target subfolders (Behind The Scenes, etc)"
+    },
+    "/stats/{statId}": {
+      "schema": "Visitors",
+      "description": "General system metrics including active traffic counts"
+    }
+  }
+}
