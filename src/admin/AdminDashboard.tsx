@@ -2332,18 +2332,49 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                     <div className="space-y-3">
                       <div className="space-y-1.5">
-                        <label className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase">Profile Image URL</label>
-                        <input 
-                          type="text" 
-                          id="about-image-input"
-                          defaultValue={content?.about?.profileImage || ''}
-                          className="w-full px-4 py-3 bg-black border border-white/10 text-white text-xs"
-                          placeholder="/src/assets/images/photographer_portrait_1782327683000.jpg"
-                          onChange={(e) => {
-                            const imgPreview = document.getElementById('about-image-preview') as HTMLImageElement;
-                            if (imgPreview) imgPreview.src = e.target.value;
-                          }}
-                        />
+                        <label className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase block">Profile Image URL / Direct Upload</label>
+                        <div className="flex gap-2 items-center">
+                          <input 
+                            type="text" 
+                            id="about-image-input"
+                            defaultValue={content?.about?.profileImage || ''}
+                            className="flex-1 px-4 py-3 bg-black border border-white/10 text-white text-xs"
+                            placeholder="Enter image URL or select local file"
+                            onChange={(e) => {
+                              const imgPreview = document.getElementById('about-image-preview') as HTMLImageElement;
+                              if (imgPreview) imgPreview.src = e.target.value;
+                            }}
+                          />
+                          <label className="px-3 py-3 bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer font-mono text-[10px] uppercase tracking-wider whitespace-nowrap">
+                            Upload File
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (event) => {
+                                    const base64 = event.target?.result as string;
+                                    if (base64) {
+                                      const urlInput = document.getElementById('about-image-input') as HTMLInputElement;
+                                      if (urlInput) {
+                                        urlInput.value = base64;
+                                      }
+                                      const imgPreview = document.getElementById('about-image-preview') as HTMLImageElement;
+                                      if (imgPreview) {
+                                        imgPreview.src = base64;
+                                      }
+                                      triggerToast("Local profile file loaded successfully!");
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
                       </div>
 
                       <div className="space-y-1.5">
@@ -2455,49 +2486,81 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           {/* TAB 13: CONTACT MESSAGES */}
           {activeTab === 'messages' && (
             <div className="space-y-6">
-              <div>
-                <h2 className="text-2xl font-serif text-white uppercase tracking-wider">Contact Inbox</h2>
-                <p className="text-xs text-zinc-500 font-mono mt-1">CLIENT ENQUIRIES DISPATCHED FROM STUDIO REACH PORTALS</p>
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-serif text-white uppercase tracking-wider">Contact Inbox</h2>
+                  <p className="text-xs text-zinc-500 font-mono mt-1">CLIENT ENQUIRIES DISPATCHED FROM STUDIO REACH PORTALS</p>
+                </div>
+                {messages.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm("Are you sure you want to permanently delete all messages? This action cannot be undone.")) {
+                        syncMessages([]);
+                        logAdminAction("Permanently deleted all client messages", "system");
+                        triggerToast("All client messages permanently deleted.");
+                      }
+                    }}
+                    className="px-4 py-2 bg-red-950/40 hover:bg-red-900 border border-red-500/20 text-red-400 font-mono text-xs tracking-widest uppercase transition-colors cursor-pointer"
+                  >
+                    Delete All Messages
+                  </button>
+                )}
               </div>
 
               <div className="space-y-4">
-                {filteredMessages.map(m => (
-                  <div key={m.id} className="p-6 bg-[#080808] border border-white/5 space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-sm font-bold text-white uppercase font-mono">{m.name}</h3>
-                        <p className="text-[10px] font-mono text-zinc-500">{m.email} • {new Date(m.date).toLocaleString()}</p>
-                      </div>
-                      <span className={`px-2 py-0.5 font-mono text-[9px] uppercase font-bold ${
-                        m.status === 'unread' ? 'bg-gold/10 text-gold border border-gold/20' : 'bg-black border border-white/5 text-zinc-500'
-                      }`}>
-                        {m.status}
-                      </span>
-                    </div>
-
-                    <div className="p-4 bg-black border border-white/5 font-mono text-[11px] text-zinc-300 leading-relaxed">
-                      {m.message}
-                    </div>
-
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => {
-                          const r = prompt('Type your response to the client:');
-                          if (r) handleReplyMessage(m.id, r);
-                        }}
-                        className="px-3.5 py-1.5 bg-gold hover:bg-white text-black font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
-                      >
-                        Send Reply
-                      </button>
-                      <button
-                        onClick={() => triggerToast('Message archived.')}
-                        className="px-3.5 py-1.5 border border-white/10 hover:border-white/20 text-zinc-400 hover:text-white font-mono text-[10px] uppercase tracking-wider transition-colors"
-                      >
-                        Archive
-                      </button>
-                    </div>
+                {filteredMessages.length === 0 ? (
+                  <div className="p-8 bg-[#080808] border border-white/5 text-center text-zinc-500 font-mono text-xs uppercase">
+                    No client messages found.
                   </div>
-                ))}
+                ) : (
+                  filteredMessages.map(m => (
+                    <div key={m.id} className="p-6 bg-[#080808] border border-white/5 space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="text-sm font-bold text-white uppercase font-mono">{m.name}</h3>
+                          <p className="text-[10px] font-mono text-zinc-500">{m.email} • {new Date(m.date).toLocaleString()}</p>
+                        </div>
+                        <span className={`px-2 py-0.5 font-mono text-[9px] uppercase font-bold ${
+                          m.status === 'unread' ? 'bg-gold/10 text-gold border border-gold/20' : 'bg-black border border-white/5 text-zinc-500'
+                        }`}>
+                          {m.status}
+                        </span>
+                      </div>
+
+                      <div className="p-4 bg-black border border-white/5 font-mono text-[11px] text-zinc-300 leading-relaxed">
+                        {m.message}
+                      </div>
+
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => {
+                            const r = prompt('Type your response to the client:');
+                            if (r) handleReplyMessage(m.id, r);
+                          }}
+                          className="px-3.5 py-1.5 bg-gold hover:bg-white text-black font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
+                        >
+                          Send Reply
+                        </button>
+                        <button
+                          onClick={() => triggerToast('Message archived.')}
+                          className="px-3.5 py-1.5 border border-white/10 hover:border-white/20 text-zinc-400 hover:text-white font-mono text-[10px] uppercase tracking-wider transition-colors"
+                        >
+                          Archive
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm("Are you sure you want to permanently delete this message?")) {
+                              handleDeleteMessage(m.id);
+                            }
+                          }}
+                          className="px-3.5 py-1.5 bg-red-950/20 border border-red-500/20 hover:bg-red-900 text-red-400 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -3072,8 +3135,42 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-zinc-500">Artwork Image URL</label>
-                <input type="text" defaultValue="/src/assets/images/wedding_cinematic_1782327639845.jpg" required onChange={(e) => setPortfolioForm({...portfolioForm, imageUrl: e.target.value})} className="w-full px-3 py-2 bg-black border border-white/10 text-white" />
+                <label className="text-zinc-500 block">Artwork Image URL / Direct Upload</label>
+                <div className="flex gap-2 items-center">
+                  <input 
+                    type="text" 
+                    value={portfolioForm.imageUrl || ''} 
+                    required 
+                    onChange={(e) => setPortfolioForm({...portfolioForm, imageUrl: e.target.value})} 
+                    className="flex-1 px-3 py-2 bg-black border border-white/10 text-white" 
+                    placeholder="Enter image URL or upload file"
+                  />
+                  <label className="px-3 py-2 bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer font-mono text-[10px] uppercase tracking-wider whitespace-nowrap">
+                    Upload File
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const base64 = event.target?.result as string;
+                            if (base64) {
+                              setPortfolioForm(prev => ({ ...prev, imageUrl: base64 }));
+                              triggerToast("Local file loaded successfully!");
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+                {portfolioForm.imageUrl && portfolioForm.imageUrl.startsWith('data:') && (
+                  <p className="text-[10px] text-gold font-mono">✓ Base64 Local File Loaded</p>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-4">

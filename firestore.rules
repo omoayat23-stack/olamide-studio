@@ -134,63 +134,69 @@ service cloud.firestore {
 
     // Bookings
     match /bookings/{bookingId} {
-      allow get: if isVerifiedAdmin();
-      allow list: if isVerifiedAdmin();
+      allow get, list: if isVerifiedAdmin() || isAdmin();
       allow create: if isValidId(bookingId) && isValidBooking(incoming());
-      allow update, delete: if isVerifiedAdmin() && isValidId(bookingId) && isValidBooking(incoming());
+      allow update: if (isVerifiedAdmin() || isAdmin()) && isValidId(bookingId) && isValidBooking(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(bookingId);
     }
 
     // Contact Messages
     match /messages/{msgId} {
-      allow get: if isVerifiedAdmin();
-      allow list: if isVerifiedAdmin();
+      allow get, list: if isVerifiedAdmin() || isAdmin();
       allow create: if isValidId(msgId) && isValidMessage(incoming());
-      allow update, delete: if isVerifiedAdmin() && isValidId(msgId) && isValidMessage(incoming());
+      allow update: if (isVerifiedAdmin() || isAdmin()) && isValidId(msgId) && isValidMessage(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(msgId);
     }
 
     // Portfolio items
     match /portfolio/{itemId} {
       allow read: if true;
-      allow create, update, delete: if isVerifiedAdmin() && isValidId(itemId) && isValidPortfolio(incoming());
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(itemId) && isValidPortfolio(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(itemId);
     }
 
     // Media library items
     match /media/{mediaId} {
       allow read: if true;
-      allow create, update, delete: if isVerifiedAdmin() && isValidId(mediaId) && isValidMediaItem(incoming());
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(mediaId) && isValidMediaItem(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(mediaId);
     }
 
     // Crew roster
     match /crew/{crewId} {
       allow read: if true;
-      allow create, update, delete: if isVerifiedAdmin() && isValidId(crewId) && isValidCrewMember(incoming());
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(crewId) && isValidCrewMember(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(crewId);
     }
 
     // Blog posts
     match /blog/{postId} {
       allow read: if true;
-      allow create, update, delete: if isVerifiedAdmin() && isValidId(postId) && isValidBlogPost(incoming());
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(postId) && isValidBlogPost(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(postId);
     }
 
     // Transactions
     match /transactions/{txId} {
-      allow read, write: if isVerifiedAdmin() && isValidId(txId) && (request.method == 'delete' || isValidTransaction(incoming()));
+      allow read: if isVerifiedAdmin() || isAdmin();
+      allow create, update: if (isVerifiedAdmin() || isAdmin()) && isValidId(txId) && isValidTransaction(incoming());
+      allow delete: if (isVerifiedAdmin() || isAdmin()) && isValidId(txId);
     }
 
     // Website Content and Admin Profiles
     match /content/{contentId} {
       allow read: if true;
-      allow write: if isVerifiedAdmin() && isValidId(contentId);
+      allow write: if (isVerifiedAdmin() || isAdmin()) && isValidId(contentId);
     }
 
     match /profile/{profileId} {
-      allow read, write: if isVerifiedAdmin() && isValidId(profileId);
+      allow read, write: if (isVerifiedAdmin() || isAdmin()) && isValidId(profileId);
     }
 
     // Audit Logs
     match /logs/{logId} {
-      allow read: if isVerifiedAdmin();
-      allow create: if isVerifiedAdmin() && isValidId(logId);
+      allow read: if isVerifiedAdmin() || isAdmin();
+      allow create: if (isVerifiedAdmin() || isAdmin()) && isValidId(logId);
       allow update, delete: if false; // Logs are immutable once written!
     }
 
