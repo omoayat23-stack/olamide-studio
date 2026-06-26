@@ -49,6 +49,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   // Loaded DB States
   const [bookings, setBookings] = useState<BookingData[]>([]);
+  const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [crew, setCrew] = useState<CrewMember[]>([]);
   const [blog, setBlog] = useState<BlogPost[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -70,8 +71,17 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const handleDeleteBooking = (id: string) => {
     const updated = bookings.filter(b => b.id !== id);
     syncBookings(updated);
+    setSelectedBookingIds(prev => prev.filter(item => item !== id));
     logAdminAction(`Permanently deleted booking reference: ${id}`, 'booking');
     triggerToast(`Booking ${id} permanently deleted.`);
+  };
+
+  const handleBulkDeleteBookings = (ids: string[]) => {
+    const updated = bookings.filter(b => !ids.includes(b.id!));
+    syncBookings(updated);
+    setSelectedBookingIds(prev => prev.filter(id => !ids.includes(id)));
+    logAdminAction(`Permanently bulk deleted ${ids.length} booking(s)`, 'booking');
+    triggerToast(`${ids.length} booking(s) permanently deleted.`);
   };
 
   const handleDeleteTransaction = (id: string) => {
@@ -1580,6 +1590,24 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <p className="text-xs text-zinc-500 font-mono mt-1">APPROVE, SCHEDULE, AND MANAGE USER RESERVATIONS</p>
                 </div>
                 <div className="flex items-center space-x-3">
+                  {selectedBookingIds.length > 0 && (
+                    <button
+                      onClick={() => {
+                        requestConfirmation(
+                          "Bulk Delete Bookings",
+                          `Are you sure you want to permanently delete the ${selectedBookingIds.length} selected booking(s)?`,
+                          () => handleBulkDeleteBookings(selectedBookingIds),
+                          "Delete Selected",
+                          true
+                        );
+                      }}
+                      className="px-4 py-2.5 bg-red-950 hover:bg-red-900 border border-red-500/30 text-red-400 font-mono text-xs tracking-widest uppercase transition-colors flex items-center space-x-1.5 cursor-pointer"
+                      title="Delete all selected bookings permanently"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Bulk Delete ({selectedBookingIds.length})</span>
+                    </button>
+                  )}
                   <button 
                     onClick={() => {
                       requestConfirmation(
@@ -1618,6 +1646,22 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-white/5 font-mono text-[10px] text-zinc-500 uppercase tracking-widest bg-black/40">
+                      <th className="p-4 w-12 text-center">
+                        <input
+                          type="checkbox"
+                          checked={filteredBookings.length > 0 && filteredBookings.every(b => selectedBookingIds.includes(b.id!))}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const allIds = filteredBookings.map(b => b.id!);
+                              setSelectedBookingIds(prev => Array.from(new Set([...prev, ...allIds])));
+                            } else {
+                              const filteredIds = filteredBookings.map(b => b.id!);
+                              setSelectedBookingIds(prev => prev.filter(id => !filteredIds.includes(id)));
+                            }
+                          }}
+                          className="w-4 h-4 accent-gold cursor-pointer rounded border-white/10 bg-black text-gold focus:ring-gold"
+                        />
+                      </th>
                       <th className="p-4">Reference</th>
                       <th className="p-4">Patron</th>
                       <th className="p-4">Contact</th>
@@ -1628,80 +1672,97 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 text-xs">
-                    {filteredBookings.map(b => (
-                      <tr key={b.id} className="hover:bg-white/[0.01] transition-colors">
-                        <td className="p-4 font-mono text-gold font-bold">{b.id}</td>
-                        <td className="p-4">
-                          <p className="font-bold text-white uppercase">{b.name}</p>
-                          <span className="text-[10px] text-zinc-500 font-mono italic">Client</span>
-                        </td>
-                        <td className="p-4 space-y-0.5 font-mono text-zinc-400">
-                          <p className="flex items-center space-x-1">
-                            <Mail className="w-3 h-3 text-gold" />
-                            <span>{b.email}</span>
-                          </p>
-                          <p className="flex items-center space-x-1">
-                            <Phone className="w-3 h-3 text-gold" />
-                            <span>{b.phone}</span>
-                          </p>
-                        </td>
-                        <td className="p-4">
-                          <span className="bg-white/5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wide text-zinc-300">
-                            {b.eventType}
-                          </span>
-                        </td>
-                        <td className="p-4 font-mono text-zinc-400">{b.preferredDate}</td>
-                        <td className="p-4">
-                          <span className={`px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider font-bold ${
-                            b.status === 'confirmed' ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20' :
-                            b.status === 'cancelled' ? 'bg-red-950/40 text-red-400 border border-red-500/20' :
-                            'bg-amber-950/40 text-amber-400 border border-amber-500/20 animate-pulse'
-                          }`}>
-                            {b.status}
-                          </span>
-                        </td>
-                        <td className="p-4 text-right space-x-2">
-                          {b.status === 'pending' && (
-                            <>
-                              <button 
-                                onClick={() => handleApproveBooking(b.id!)}
-                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
-                                title="Approve booking slot"
-                              >
-                                Approve
-                              </button>
-                              <button 
-                                onClick={() => handleCancelBooking(b.id!)}
-                                className="px-2.5 py-1.5 bg-red-950 text-red-400 hover:bg-red-900 border border-red-500/20 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
-                                title="Reject / Cancel booking"
-                              >
-                                Reject
-                              </button>
-                            </>
-                          )}
-                          <a 
-                            href={`https://wa.me/234${b.phone.replace(/^0/, '')}?text=${encodeURIComponent(`Hello ${b.name}, this is Olamide Visuals regarding your ${b.eventType} booking on ${b.preferredDate}.`)}`}
-                            target="_blank"
-                            className="px-2.5 py-1.5 bg-black border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white font-mono text-[10px] uppercase tracking-wider transition-all"
-                          >
-                            Chat
-                          </a>
-                          <button 
-                            onClick={() => {
-                              requestConfirmation(
-                                "Delete Booking",
-                                `Are you sure you want to permanently delete booking reference ${b.id}?`,
-                                () => handleDeleteBooking(b.id!)
-                              );
-                            }}
-                            className="px-2.5 py-1.5 bg-red-950/40 border border-red-500/20 text-red-400 hover:bg-red-900 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
-                            title="Delete booking permanently"
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredBookings.map(b => {
+                      const isSelected = selectedBookingIds.includes(b.id!);
+                      return (
+                        <tr key={b.id} className={`hover:bg-white/[0.01] transition-colors ${isSelected ? 'bg-gold/[0.02]' : ''}`}>
+                          <td className="p-4 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedBookingIds(prev => [...prev, b.id!]);
+                                } else {
+                                  setSelectedBookingIds(prev => prev.filter(id => id !== b.id));
+                                }
+                              }}
+                              className="w-4 h-4 accent-gold cursor-pointer rounded border-white/10 bg-black text-gold focus:ring-gold"
+                            />
+                          </td>
+                          <td className="p-4 font-mono text-gold font-bold">{b.id}</td>
+                          <td className="p-4">
+                            <p className="font-bold text-white uppercase">{b.name}</p>
+                            <span className="text-[10px] text-zinc-500 font-mono italic">Client</span>
+                          </td>
+                          <td className="p-4 space-y-0.5 font-mono text-zinc-400">
+                            <p className="flex items-center space-x-1">
+                              <Mail className="w-3 h-3 text-gold" />
+                              <span>{b.email}</span>
+                            </p>
+                            <p className="flex items-center space-x-1">
+                              <Phone className="w-3 h-3 text-gold" />
+                              <span>{b.phone}</span>
+                            </p>
+                          </td>
+                          <td className="p-4">
+                            <span className="bg-white/5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wide text-zinc-300">
+                              {b.eventType}
+                            </span>
+                          </td>
+                          <td className="p-4 font-mono text-zinc-400">{b.preferredDate}</td>
+                          <td className="p-4">
+                            <span className={`px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider font-bold ${
+                              b.status === 'confirmed' ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20' :
+                              b.status === 'cancelled' ? 'bg-red-950/40 text-red-400 border border-red-500/20' :
+                              'bg-amber-950/40 text-amber-400 border border-amber-500/20 animate-pulse'
+                            }`}>
+                              {b.status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right space-x-2">
+                            {b.status === 'pending' && (
+                              <>
+                                <button 
+                                  onClick={() => handleApproveBooking(b.id!)}
+                                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
+                                  title="Approve booking slot"
+                                >
+                                  Approve
+                                </button>
+                                <button 
+                                  onClick={() => handleCancelBooking(b.id!)}
+                                  className="px-2.5 py-1.5 bg-red-950 text-red-400 hover:bg-red-900 border border-red-500/20 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
+                                  title="Reject / Cancel booking"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                            <a 
+                              href={`https://wa.me/234${b.phone.replace(/^0/, '')}?text=${encodeURIComponent(`Hello ${b.name}, this is Olamide Visuals regarding your ${b.eventType} booking on ${b.preferredDate}.`)}`}
+                              target="_blank"
+                              className="px-2.5 py-1.5 bg-black border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white font-mono text-[10px] uppercase tracking-wider transition-all"
+                            >
+                              Chat
+                            </a>
+                            <button 
+                              onClick={() => {
+                                requestConfirmation(
+                                  "Delete Booking",
+                                  `Are you sure you want to permanently delete booking reference ${b.id}?`,
+                                  () => handleDeleteBooking(b.id!)
+                                );
+                              }}
+                              className="px-2.5 py-1.5 bg-red-950/40 border border-red-500/20 text-red-400 hover:bg-red-900 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
+                              title="Delete booking permanently"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
