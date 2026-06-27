@@ -51,7 +51,8 @@ type TabType =
   | 'brand' 
   | 'logs'
   | 'instagram'
-  | 'spotlight';
+  | 'spotlight'
+  | 'supabase';
 
 export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   // Navigation & UI State
@@ -190,6 +191,31 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [spotlightAiAnalyzing, setSpotlightAiAnalyzing] = useState(false);
   const [spotlightAiScanResult, setSpotlightAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string } | null>(null);
 
+  // Supabase states
+  const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('olamide_visuals_supabase_url') || '');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState(() => localStorage.getItem('olamide_visuals_supabase_anon_key') || '');
+  const [supabaseConfig, setSupabaseConfig] = useState<{ envConfigured: boolean; url: string | null } | null>(null);
+  const [supabaseTesting, setSupabaseTesting] = useState(false);
+  const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
+  const [syncingTables, setSyncingTables] = useState<Record<string, boolean>>({});
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedText(label);
+    triggerToast(`SQL Schema for "${label}" copied to clipboard!`);
+    setTimeout(() => setCopiedText(null), 2000);
+  };
+
+  useEffect(() => {
+    fetch('/api/supabase/config')
+      .then(res => res.json())
+      .then(data => {
+        setSupabaseConfig(data);
+      })
+      .catch(err => console.error("Failed to fetch Supabase config:", err));
+  }, []);
+
   const analyzePortfolioImage = async (imageSrc: string) => {
     if (!imageSrc) return;
     setAiAnalyzing(true);
@@ -306,6 +332,105 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       triggerToast(`AI Spotlight Analysis failed: ${err.message || err}`);
     } finally {
       setSpotlightAiAnalyzing(false);
+    }
+  };
+
+  const testSupabaseConnection = async () => {
+    setSupabaseTesting(true);
+    setSupabaseTestResult(null);
+    triggerToast("Testing connection to Supabase...");
+
+    try {
+      const payload: any = {};
+      if (supabaseUrl) payload.url = supabaseUrl;
+      if (supabaseAnonKey) payload.anonKey = supabaseAnonKey;
+
+      const res = await fetch("/api/supabase/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setSupabaseTestResult({
+          success: false,
+          message: data.error || "Failed to connect",
+          details: data.details ? JSON.stringify(data.details, null, 2) : undefined
+        });
+        triggerToast("Supabase Connection Failed");
+      } else {
+        setSupabaseTestResult({
+          success: true,
+          message: data.message,
+          details: data.details
+        });
+        triggerToast("Supabase Connection Successful!");
+        logAdminAction("Successfully tested Supabase database connection", "system");
+
+        if (supabaseUrl) {
+          localStorage.setItem('olamide_visuals_supabase_url', supabaseUrl);
+        }
+        if (supabaseAnonKey) {
+          localStorage.setItem('olamide_visuals_supabase_anon_key', supabaseAnonKey);
+        }
+      }
+    } catch (err: any) {
+      console.error("Test connection error:", err);
+      setSupabaseTestResult({
+        success: false,
+        message: err.message || "An unexpected error occurred."
+      });
+      triggerToast("Supabase Connection Failed");
+    } finally {
+      setSupabaseTesting(false);
+    }
+  };
+
+  const syncTableToSupabase = async (tableName: string, dataItems: any[]) => {
+    if (dataItems.length === 0) {
+      triggerToast(`No local items to sync for table "${tableName}".`);
+      return;
+    }
+
+    setSyncingTables(prev => ({ ...prev, [tableName]: true }));
+    triggerToast(`Syncing ${dataItems.length} records to Supabase "${tableName}"...`);
+
+    try {
+      const mappedRecords = dataItems.map(item => {
+        const clone = { ...item };
+        if (!clone.id) {
+          clone.id = Math.random().toString(36).substring(2, 11);
+        }
+        return clone;
+      });
+
+      const payload: any = {
+        tableName,
+        records: mappedRecords
+      };
+
+      if (supabaseUrl) payload.url = supabaseUrl;
+      if (supabaseAnonKey) payload.anonKey = supabaseAnonKey;
+
+      const res = await fetch("/api/supabase/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.error || "Failed to synchronize");
+      }
+
+      triggerToast(`✓ Synchronized ${dataItems.length} items to "${tableName}"!`);
+      logAdminAction(`Synchronized database table ${tableName} to Supabase (${dataItems.length} records)`, "system");
+    } catch (err: any) {
+      console.error(`Sync error for ${tableName}:`, err);
+      triggerToast(`Sync failed for ${tableName}: ${err.message}`);
+    } finally {
+      setSyncingTables(prev => ({ ...prev, [tableName]: false }));
     }
   };
 
@@ -1420,6 +1545,20 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {/* CONTROL Group */}
             <div className="space-y-1">
               <span className="px-3 text-[9px] font-mono tracking-widest text-zinc-600 uppercase block mb-2">SYSTEM CONFIG</span>
+              
+              <button 
+                onClick={() => setActiveTab('supabase')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-mono tracking-wider uppercase transition-colors rounded-none cursor-pointer ${
+                  activeTab === 'supabase' ? 'bg-[#0F0F0F] text-gold border-l-2 border-gold' : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span className="flex items-center space-x-2.5">
+                  <Database className="w-4 h-4" />
+                  <span>Supabase Sync</span>
+                </span>
+                <ChevronRight className={`w-3.5 h-3.5 ${activeTab === 'supabase' ? 'opacity-100' : 'opacity-0'}`} />
+              </button>
+
               <button 
                 onClick={() => setActiveTab('logs')}
                 className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-mono tracking-wider uppercase transition-colors rounded-none cursor-pointer ${
@@ -3686,6 +3825,405 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 20: SUPABASE DATA SYNC & CONNECTION */}
+          {activeTab === 'supabase' && (
+            <div className="space-y-6 animate-fade-in text-zinc-100">
+              <div>
+                <h2 className="text-2xl font-serif text-white uppercase tracking-wider">Supabase Integration Curation</h2>
+                <p className="text-xs text-zinc-500 font-mono mt-1">ESTABLISH SECURE POSTGRESQL CONNECTIONS AND MOBILIZE PORTFOLIO AND BOOKINGS SYNC LAYERS</p>
+              </div>
+
+              {/* Status Header Banner */}
+              <div className="p-4 bg-zinc-950 border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono">
+                <div className="space-y-1">
+                  <span className="text-[10px] text-zinc-500 uppercase tracking-widest block">CONNECTION ENGINE STATUS</span>
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-2.5 h-2.5 rounded-full ${supabaseConfig?.envConfigured || supabaseTestResult?.success ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="text-xs font-bold uppercase text-white">
+                      {supabaseTestResult?.success ? 'ONLINE & READY' : supabaseConfig?.envConfigured ? 'CREDENTIALS PRE-CONFIGURED' : 'DISCONNECTED'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                  {supabaseConfig?.envConfigured && (
+                    <span className="text-[9px] uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                      Using Env Variables
+                    </span>
+                  )}
+                  {supabaseConfig?.url && (
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      ENDPOINT: {supabaseConfig.url}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* Connection Form Section */}
+                <div className="lg:col-span-5 bg-[#080808] border border-white/5 p-6 space-y-6 self-start">
+                  <div className="space-y-1 border-b border-white/5 pb-4">
+                    <h3 className="text-sm font-bold text-white uppercase font-mono flex items-center space-x-1.5">
+                      <Settings className="w-4 h-4 text-gold" />
+                      <span>Connection Credentials</span>
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">SPECIFY DIRECT PORTAL ENDPOINTS TO BYPASS FIRESTORE TO CLIENT MIRRORS</p>
+                  </div>
+
+                  <div className="space-y-4 font-mono text-xs">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Supabase Project URL</label>
+                      <input 
+                        type="url"
+                        placeholder="https://your-project.supabase.co"
+                        value={supabaseUrl}
+                        onChange={(e) => setSupabaseUrl(e.target.value)}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Supabase Anon Public API Key</label>
+                      <input 
+                        type="password"
+                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                        value={supabaseAnonKey}
+                        onChange={(e) => setSupabaseAnonKey(e.target.value)}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={supabaseTesting}
+                      onClick={testSupabaseConnection}
+                      className="w-full py-3 bg-transparent border border-gold text-gold hover:bg-gold hover:text-black font-mono text-xs tracking-widest font-bold uppercase transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${supabaseTesting ? 'animate-spin' : ''}`} />
+                      <span>{supabaseTesting ? 'VERIFYING PORTAL...' : 'TEST PORTAL CONNECTION'}</span>
+                    </button>
+
+                    {/* Test result display */}
+                    {supabaseTestResult && (
+                      <div className={`p-4 border font-mono text-[10px] leading-relaxed transition-all duration-300 ${
+                        supabaseTestResult.success 
+                          ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-300' 
+                          : 'bg-red-950/20 border-red-500/20 text-red-300'
+                      }`}>
+                        <div className="flex items-center space-x-1.5 font-bold uppercase tracking-wider text-[11px] mb-1">
+                          <Info className="w-3.5 h-3.5 shrink-0" />
+                          <span>{supabaseTestResult.success ? 'Success Report' : 'Diagnostic Error'}</span>
+                        </div>
+                        <p>{supabaseTestResult.message}</p>
+                        {supabaseTestResult.details && (
+                          <pre className="mt-2 p-2 bg-black/40 text-[9px] text-zinc-400 border border-white/5 overflow-x-auto">
+                            {supabaseTestResult.details}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Database Sync Grid Section */}
+                <div className="lg:col-span-7 bg-[#080808] border border-white/5 p-6 space-y-6">
+                  <div className="space-y-1 border-b border-white/5 pb-4">
+                    <h3 className="text-sm font-bold text-white uppercase font-mono flex items-center space-x-1.5">
+                      <Database className="w-4 h-4 text-gold" />
+                      <span>Database Sync Hub</span>
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">MIGRATE ACTIVE LOCAL AND FIRESTORE RECORDS TO POSTGRESQL TABLES</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    
+                    {/* Portfolio Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: portfolio_items</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Portfolio Artwork</h4>
+                        <p className="text-[9px] text-zinc-500">Fine-art and client showcase items.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{portfolioItems.length} records</span>
+                        <button
+                          disabled={syncingTables['portfolio_items'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('portfolio_items', portfolioItems)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['portfolio_items'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Spotlight Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: spotlight</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Spotlight Carousel</h4>
+                        <p className="text-[9px] text-zinc-500">Cinematic storyboards and meta gear specs.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{spotlightItems.length} records</span>
+                        <button
+                          disabled={syncingTables['spotlight'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('spotlight', spotlightItems)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['spotlight'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Bookings Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: bookings</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Client Bookings</h4>
+                        <p className="text-[9px] text-zinc-500">Reservation calendar blocks and packages.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{bookings.length} records</span>
+                        <button
+                          disabled={syncingTables['bookings'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('bookings', bookings)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['bookings'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Messages Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: messages</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Inbox Messages</h4>
+                        <p className="text-[9px] text-zinc-500">Contact form notes and inquiries.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{messages.length} records</span>
+                        <button
+                          disabled={syncingTables['messages'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('messages', messages)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['messages'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Crew Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: crew</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Crew Members</h4>
+                        <p className="text-[9px] text-zinc-500">Team bios, photorealistic avatars, roles.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{crew.length} records</span>
+                        <button
+                          disabled={syncingTables['crew'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('crew', crew)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['crew'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Blog Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: blog</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Journal Articles</h4>
+                        <p className="text-[9px] text-zinc-500">Blog posts, read-times, and narratives.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{blog.length} records</span>
+                        <button
+                          disabled={syncingTables['blog'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('blog', blog)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['blog'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+              </div>
+
+              {/* SQL Schemas Setup Accordion Card */}
+              <div className="bg-[#080808] border border-white/5 p-6 space-y-4">
+                <div className="border-b border-white/5 pb-4 space-y-1">
+                  <h3 className="text-sm font-bold text-white uppercase font-mono flex items-center space-x-1.5">
+                    <FileCode className="w-4.5 h-4.5 text-gold" />
+                    <span>Supabase Postgres Schema Setup Guide</span>
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 font-mono">
+                    COPY AND RUN THESE SCHEMAS DIRECTLY IN YOUR SUPABASE SQL EDITOR BEFORE RUNNING THE SYNC HANDLERS ABOVE
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 font-mono text-[10px]">
+                  
+                  {/* Schema 1: Portfolio Items */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">1. PORTFOLIO ITEMS SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'portfolio_items' table with correct column fields.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table portfolio_items (
+  id text primary key,
+  title text not null,
+  category text,
+  "imageUrl" text,
+  client text,
+  date text,
+  description text,
+  likes integer default 0,
+  views integer default 0
+);`, 'portfolio_items')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'portfolio_items' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 2: Spotlight */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">2. SPOTLIGHT STORY SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'spotlight' table with technical camera specs.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table spotlight (
+  id text primary key,
+  title text not null,
+  category text,
+  tagline text,
+  description text,
+  "technicalSpecs" text,
+  "imageUrl" text,
+  "createdAt" text
+);`, 'spotlight')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'spotlight' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 3: Bookings */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">3. CLIENT BOOKINGS SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'bookings' table including total price, and paid status.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table bookings (
+  id text primary key,
+  name text not null,
+  email text,
+  phone text,
+  date text,
+  time text,
+  "eventType" text,
+  status text,
+  notes text,
+  total numeric default 0,
+  paid boolean default false,
+  "createdAt" text
+);`, 'bookings')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'bookings' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 4: Messages */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">4. INBOX MESSAGES SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates 'messages' table for customer messages.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table messages (
+  id text primary key,
+  name text not null,
+  email text,
+  subject text,
+  message text,
+  status text,
+  date text
+);`, 'messages')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'messages' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 5: Crew */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">5. TEAM CREW SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates 'crew' table with members, orders, and social indices.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table crew (
+  id text primary key,
+  name text not null,
+  role text,
+  bio text,
+  "imageUrl" text,
+  instagram text,
+  "order" integer default 0
+);`, 'crew')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'crew' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 6: Blog */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">6. JOURNAL ARTICLES SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates 'blog' table with excerpt, contents, and like indices.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table blog (
+  id text primary key,
+  title text not null,
+  excerpt text,
+  content text,
+  "imageUrl" text,
+  category text,
+  date text,
+  "readTime" text,
+  likes integer default 0,
+  "commentsCount" integer default 0
+);`, 'blog')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'blog' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
                 </div>
               </div>
             </div>

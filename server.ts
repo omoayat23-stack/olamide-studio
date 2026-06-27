@@ -3,6 +3,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 
 async function startServer() {
   const app = express();
@@ -15,6 +16,111 @@ async function startServer() {
   // API endpoints
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Supabase API Integration
+  app.get("/api/supabase/config", (req, res) => {
+    res.json({
+      envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
+      url: process.env.SUPABASE_URL ? `${process.env.SUPABASE_URL.substring(0, 20)}...` : null
+    });
+  });
+
+  app.post("/api/supabase/test", async (req, res) => {
+    try {
+      const url = req.body.url || process.env.SUPABASE_URL;
+      const anonKey = req.body.anonKey || process.env.SUPABASE_ANON_KEY;
+
+      if (!url || !anonKey) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Supabase URL and Anon Key are required. Please configure them in your Environment Secrets or enter them directly below." 
+        });
+      }
+
+      const supabase = createClient(url, anonKey);
+      
+      // Perform a lightweight check by requesting a select from a dummy table.
+      // If it fails with "relation does not exist" or similar, the client and keys are still verified as valid (since the request reached PostgREST).
+      const { error } = await supabase.from('supabase_connection_test').select('*').limit(1);
+      
+      if (error) {
+        // If error code is postgrest relation doesn't exist (PGRST116 / PGRST111 or PostgreSQL 42P01), the API keys are correct but the table doesn't exist. This is a success!
+        if (error.code && (error.code.startsWith('PGRST') || error.code === '42P01')) {
+          return res.json({
+            success: true,
+            message: "Successfully connected to Supabase API & Database!",
+            details: "API authentication credentials are valid. You can now build the required tables and synchronize data.",
+            envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+          });
+        }
+        return res.status(401).json({
+          success: false,
+          error: `Supabase API validation failed: ${error.message}`,
+          details: error,
+          envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Successfully connected to Supabase!",
+        details: "Database connection verified and test table queried successfully.",
+        envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error.message || "An unexpected error occurred during Supabase verification"
+      });
+    }
+  });
+
+  app.post("/api/supabase/sync", async (req, res) => {
+    try {
+      const url = req.body.url || process.env.SUPABASE_URL;
+      const anonKey = req.body.anonKey || process.env.SUPABASE_ANON_KEY;
+      const { tableName, records } = req.body;
+
+      if (!url || !anonKey) {
+        return res.status(400).json({ success: false, error: "Missing Supabase connection credentials." });
+      }
+      if (!tableName || !records || !Array.isArray(records)) {
+        return res.status(400).json({ success: false, error: "Missing tableName or records array." });
+      }
+
+      if (records.length === 0) {
+        return res.json({ success: true, message: "No records found to sync." });
+      }
+
+      const supabase = createClient(url, anonKey);
+
+      // Perform an upsert on the table using 'id' as the conflict resolution column.
+      const { error } = await supabase
+        .from(tableName)
+        .upsert(records, { onConflict: 'id' });
+
+      if (error) {
+        console.error(`Sync error for table ${tableName}:`, error);
+        return res.status(500).json({ 
+          success: false, 
+          error: error.message,
+          details: error,
+          hint: `Please verify that the table '${tableName}' exists in your Supabase database with columns that match your records, and that Row Level Security (RLS) is disabled or has policies configured to allow INSERT/UPDATE.`
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: `Successfully synchronized ${records.length} records to Supabase table '${tableName}'!`
+      });
+    } catch (error: any) {
+      console.error("General Sync Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error.message || "An error occurred during synchronization."
+      });
+    }
   });
 
   app.post("/api/gemini/analyze-image", async (req: express.Request, res: express.Response) => {

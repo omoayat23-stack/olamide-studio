@@ -84,10 +84,17 @@ export default function Services({ onSelectServiceForBooking }: ServicesProps) {
 
                 {/* Service Bottom: pricing estimate and quick details buttons */}
                 <div className="relative z-10 space-y-4">
-                  <div className="flex justify-between items-center text-xs font-mono">
-                    <span className="text-zinc-500">ESTIMATE:</span>
-                    <span className="text-gold font-semibold">{service.priceEstimate}</span>
-                  </div>
+                  <a
+                    href="https://wa.me/2348142870306?text=Hello%20Olamide%20Visuals%2C%20I'm%20interested%20in%20your%20services%20and%20would%20like%20to%20discuss%20pricing."
+                    target="_blank"
+                    referrerPolicy="no-referrer"
+                    className="flex items-center justify-center space-x-2 w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] uppercase font-bold tracking-wider transition-all"
+                  >
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                      <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.864-9.852.002-2.63-1.023-5.101-2.883-6.963C16.528 1.932 14.061.907 11.432.908c-5.44 0-9.866 4.418-9.87 9.852 0 1.774.462 3.514 1.342 5.044L1.87 21.657l6.096-1.597-1.32-.906zm11.368-7.394c-.299-.149-1.762-.869-2.036-.968-.273-.099-.472-.149-.671.149-.199.3-.77.968-.944 1.168-.173.199-.347.224-.646.074-.3-.15-1.264-.465-2.409-1.486-.89-.794-1.49-1.775-1.665-2.074-.173-.3-.018-.462.13-.61.135-.133.298-.348.448-.522.151-.174.199-.298.298-.497.099-.198.05-.373-.025-.522-.075-.149-.671-1.616-.92-2.213-.242-.582-.488-.503-.671-.512-.173-.008-.371-.01-.57-.01-.198 0-.522.074-.794.372-.272.298-1.043 1.018-1.043 2.484 0 1.466 1.067 2.883 1.216 3.082.149.199 2.099 3.205 5.084 4.495.71.307 1.264.49 1.696.627.713.227 1.361.195 1.872.119.571-.085 1.762-.719 2.011-1.416.249-.696.249-1.293.174-1.417-.075-.124-.272-.198-.57-.347z"/>
+                    </svg>
+                    <span>Message for price or negotiation</span>
+                  </a>
 
                   <div className="flex space-x-2 pt-2">
                     <button
@@ -170,10 +177,17 @@ export default function Services({ onSelectServiceForBooking }: ServicesProps) {
 
                   {/* Actions */}
                   <div className="flex items-center justify-between pt-2">
-                    <div>
-                      <p className="text-[10px] font-mono text-zinc-500 uppercase">Starting From</p>
-                      <p className="text-lg font-sans font-bold text-gold">{selectedService.priceEstimate}</p>
-                    </div>
+                    <a
+                      href="https://wa.me/2348142870306?text=Hello%20Olamide%20Visuals%2C%20I'm%20interested%20in%20your%20services%20and%20would%20like%20to%20discuss%20pricing."
+                      target="_blank"
+                      referrerPolicy="no-referrer"
+                      className="flex-1 mr-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] uppercase font-bold tracking-wider transition-all flex items-center justify-center space-x-2"
+                    >
+                      <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.864-9.852.002-2.63-1.023-5.101-2.883-6.963C16.528 1.932 14.061.907 11.432.908c-5.44 0-9.866 4.418-9.87 9.852 0 1.774.462 3.514 1.342 5.044L1.87 21.657l6.096-1.597-1.32-.906zm11.368-7.394c-.299-.149-1.762-.869-2.036-.968-.273-.099-.472-.149-.671.149-.199.3-.77.968-.944 1.168-.173.199-.347.224-.646.074-.3-.15-1.264-.465-2.409-1.486-.89-.794-1.49-1.775-1.665-2.074-.173-.3-.018-.462.13-.61.135-.133.298-.348.448-.522.151-.174.199-.298.298-.497.099-.198.05-.373-.025-.522-.075-.149-.671-1.616-.92-2.213-.242-.582-.488-.503-.671-.512-.173-.008-.371-.01-.57-.01-.198 0-.522.074-.794.372-.272.298-1.043 1.018-1.043 2.484 0 1.466 1.067 2.883 1.216 3.082.149.199 2.099 3.205 5.084 4.495.71.307 1.264.49 1.696.627.713.227 1.361.195 1.872.119.571-.085 1.762-.719 2.011-1.416.249-.696.249-1.293.174-1.417-.075-.124-.272-.198-.57-.347z"/>
+                      </svg>
+                      <span>Message for price</span>
+                    </a>
                     <button
                       onClick={() => {
                         const title = selectedService.title;
