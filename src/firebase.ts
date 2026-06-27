@@ -29,17 +29,27 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
 export const auth = getAuth();
 
-// Test Connection to Firestore as required by constraints
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'stats', 'connection-test'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+// Test Connection to Firestore with robust retries and Vercel-optimized logs
+async function testFirestoreConnectionWithRetry(retries = 3, delay = 1500) {
+  console.log("[FIREBASE INITIALIZATION] testing Firestore database connectivity...");
+  for (let i = 0; i < retries; i++) {
+    try {
+      await getDocFromServer(doc(db, 'stats', 'connection-test'));
+      console.log(`[FIREBASE INITIALIZATION] [SUCCESS] Firestore is online and reachable! (Attempt ${i + 1})`);
+      return;
+    } catch (error: any) {
+      console.warn(`[FIREBASE INITIALIZATION] [Attempt ${i + 1}/${retries}] connection check failed: ${error.message || error}`);
+      if (error instanceof Error && error.message.includes('the client is offline')) {
+        console.error("[FIREBASE INITIALIZATION] [ERROR] Client is offline. Please check your Firebase configuration, internet access, or rules.");
+      }
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
   }
+  console.warn("[FIREBASE INITIALIZATION] [WARNING] Could not establish initial connection to Firestore. Continuing in offline/local-cache mode.");
 }
-testConnection();
+testFirestoreConnectionWithRetry();
 
 // OPERATION TYPE AND ERROR HANDLING
 export enum OperationType {

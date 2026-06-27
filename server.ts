@@ -24,49 +24,87 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
     });
   });
 
+  // Robust helper for initializing Supabase client with retry validation and Vercel-optimized logging
+  async function verifySupabaseConnectionWithRetry(url: string, anonKey: string, retries = 3, delay = 1000): Promise<{ success: boolean; error?: any; details?: string }> {
+    console.log(`[SUPABASE INITIALIZATION] Attempting to connect to Supabase project at ${url}...`);
+    
+    let lastError: any = null;
+    const supabase = createClient(url, anonKey);
+
+    for (let i = 0; i < retries; i++) {
+      try {
+        console.log(`[SUPABASE INITIALIZATION] [Attempt ${i + 1}/${retries}] Querying lightweight connection test...`);
+        
+        // Query a dummy relation to test the PostgREST API endpoint connectivity and auth keys
+        const { error } = await supabase.from('supabase_connection_test').select('*').limit(1);
+        
+        if (!error) {
+          console.log(`[SUPABASE INITIALIZATION] [SUCCESS] Successfully connected and queried 'supabase_connection_test' table on attempt ${i + 1}.`);
+          return { success: true, details: "Verified database connection and queried test table successfully." };
+        }
+
+        // Check if it's an API auth or schema error
+        // If error code is postgrest relation doesn't exist (PGRST116 / PGRST111 or PostgreSQL 42P01), the credentials are CORRECT but the table doesn't exist.
+        if (error.code && (error.code.startsWith('PGRST') || error.code === '42P01')) {
+          console.log(`[SUPABASE INITIALIZATION] [SUCCESS] Credentials validated successfully! (PostgREST returned code ${error.code}: Table 'supabase_connection_test' does not exist, which confirms API authentication is fully valid).`);
+          return { 
+            success: true, 
+            details: "API authentication credentials are valid. You can now build the required tables and synchronize data." 
+          };
+        }
+
+        // Treat any other error as transient or bad credentials
+        lastError = error;
+        console.warn(`[SUPABASE INITIALIZATION] [WARNING] Attempt ${i + 1} failed with error code ${error.code || 'unknown'}: ${error.message}`);
+        
+      } catch (err: any) {
+        lastError = err;
+        console.error(`[SUPABASE INITIALIZATION] [ERROR] Unexpected system exception during attempt ${i + 1}:`, err.message || err);
+      }
+
+      if (i < retries - 1) {
+        console.log(`[SUPABASE INITIALIZATION] Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    console.error(`[SUPABASE INITIALIZATION] [FAILURE] All ${retries} connection verification attempts failed. Last error:`, lastError);
+    return { success: false, error: lastError };
+  }
+
   app.post("/api/supabase/test", async (req, res) => {
     try {
       const url = req.body.url || process.env.SUPABASE_URL;
       const anonKey = req.body.anonKey || process.env.SUPABASE_ANON_KEY;
 
       if (!url || !anonKey) {
+        console.error("[SUPABASE TEST ENDPOINT] [ERROR] Missing Supabase URL or Anon Key credentials.");
         return res.status(400).json({ 
           success: false, 
           error: "Supabase URL and Anon Key are required. Please configure them in your Environment Secrets or enter them directly below." 
         });
       }
 
-      const supabase = createClient(url, anonKey);
+      const verificationResult = await verifySupabaseConnectionWithRetry(url, anonKey);
       
-      // Perform a lightweight check by requesting a select from a dummy table.
-      // If it fails with "relation does not exist" or similar, the client and keys are still verified as valid (since the request reached PostgREST).
-      const { error } = await supabase.from('supabase_connection_test').select('*').limit(1);
-      
-      if (error) {
-        // If error code is postgrest relation doesn't exist (PGRST116 / PGRST111 or PostgreSQL 42P01), the API keys are correct but the table doesn't exist. This is a success!
-        if (error.code && (error.code.startsWith('PGRST') || error.code === '42P01')) {
-          return res.json({
-            success: true,
-            message: "Successfully connected to Supabase API & Database!",
-            details: "API authentication credentials are valid. You can now build the required tables and synchronize data.",
-            envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
-          });
-        }
+      if (verificationResult.success) {
+        return res.json({
+          success: true,
+          message: "Successfully connected to Supabase API & Database!",
+          details: verificationResult.details,
+          envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+        });
+      } else {
+        const error = verificationResult.error;
         return res.status(401).json({
           success: false,
-          error: `Supabase API validation failed: ${error.message}`,
+          error: error?.message || "Supabase API validation failed. Please check your URL and API credentials.",
           details: error,
           envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
         });
       }
-
-      return res.json({
-        success: true,
-        message: "Successfully connected to Supabase!",
-        details: "Database connection verified and test table queried successfully.",
-        envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
-      });
     } catch (error: any) {
+      console.error("[SUPABASE TEST ENDPOINT] [FATAL SYSTEM ERROR]", error);
       return res.status(500).json({
         success: false,
         error: error.message || "An unexpected error occurred during Supabase verification"
