@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Camera, LayoutDashboard, Calendar, Users, Briefcase, Image, FileText, 
   DollarSign, Settings, Bell, Search, LogOut, Shield, ChevronRight, 
-  Trash2, Edit3, Plus, Check, X, ArrowUpRight, Folder, Globe, Link2, 
+  Trash2, Edit3, Edit, Plus, Check, X, ArrowUpRight, Folder, Globe, Link2, 
   Sliders, MessageSquare, Database, RefreshCw, Star, Info, Mail, Phone, 
   MapPin, CheckCircle, AlertTriangle, Play, HelpCircle, Download, FileSpreadsheet,
   Upload, Eye, CreditCard, ToggleLeft, ToggleRight, HardDrive, Type, FileCode, Lock, Sparkles, Instagram,
@@ -173,7 +173,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [newBlogModal, setNewBlogModal] = useState(false);
   const [newServiceModal, setNewServiceModal] = useState(false);
   const [newPortfolioModal, setNewPortfolioModal] = useState(false);
-
+  const [editPortfolioModal, setEditPortfolioModal] = useState(false);
+  const [editingPortfolioItem, setEditingPortfolioItem] = useState<PortfolioItem | null>(null);
+ 
   // Form states
   const [bookingForm, setBookingForm] = useState<Partial<BookingData>>({});
   const [crewForm, setCrewForm] = useState<Partial<CrewMember>>({});
@@ -184,13 +186,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [uploadingIg, setUploadingIg] = useState(false);
   const [spotlightForm, setSpotlightForm] = useState({ title: '', category: '', tagline: '', description: '', imageUrl: '', technicalSpecs: '' });
   const [uploadingSpotlight, setUploadingSpotlight] = useState(false);
-
+ 
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
-  const [aiScanResult, setAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string } | null>(null);
-
+  const [aiScanResult, setAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string; fallbackActive?: boolean; errorHint?: string } | null>(null);
+ 
   const [spotlightAiAnalyzing, setSpotlightAiAnalyzing] = useState(false);
-  const [spotlightAiScanResult, setSpotlightAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string } | null>(null);
-
+  const [spotlightAiScanResult, setSpotlightAiScanResult] = useState<{ visualAudit?: string; criticalCheck?: string; fallbackActive?: boolean; errorHint?: string } | null>(null);
+ 
   // Supabase states
   const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('olamide_visuals_supabase_url') || '');
   const [supabaseAnonKey, setSupabaseAnonKey] = useState(() => localStorage.getItem('olamide_visuals_supabase_anon_key') || '');
@@ -199,14 +201,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
   const [syncingTables, setSyncingTables] = useState<Record<string, boolean>>({});
   const [copiedText, setCopiedText] = useState<string | null>(null);
-
+ 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     setCopiedText(label);
     triggerToast(`SQL Schema for "${label}" copied to clipboard!`);
     setTimeout(() => setCopiedText(null), 2000);
   };
-
+ 
   useEffect(() => {
     fetch('/api/supabase/config')
       .then(res => res.json())
@@ -216,18 +218,103 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       .catch(err => console.error("Failed to fetch Supabase config:", err));
   }, []);
 
+  const uploadToSupabaseStorage = async (base64Image: string, filename: string): Promise<string> => {
+    try {
+      const res = await fetch("/api/supabase/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Image, filename }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Upload failed");
+      }
+      const data = await res.json();
+      if (data.isFallback) {
+        console.warn("Uploaded as base64 fallback:", data.message);
+      }
+      return data.url;
+    } catch (error: any) {
+      console.warn("Supabase upload failed, using inline base64 fallback:", error);
+      return base64Image;
+    }
+  };
+ 
   const analyzePortfolioImage = async (imageSrc: string) => {
     if (!imageSrc) return;
     setAiAnalyzing(true);
     setAiScanResult(null);
     triggerToast("AI is scanning and analyzing the image...");
-
+ 
     try {
       let base64Image = imageSrc;
-
+ 
       if (!imageSrc.startsWith('data:')) {
         try {
           const response = await fetch(imageSrc);
+          const blob = await response.blob();
+          base64Image = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn("Could not convert image URL to base64 on client, passing URL directly", e);
+        }
+      }
+ 
+      const res = await fetch("/api/gemini/analyze-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Image }),
+      });
+ 
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to scan image");
+      }
+ 
+      const data = await res.json();
+      if (data.title || data.category) {
+        setPortfolioForm(prev => ({
+          ...prev,
+          title: data.title || prev.title,
+          category: data.category || prev.category,
+          description: data.description || prev.description,
+          tags: data.tags || prev.tags,
+          aiPending: !!data.aiPending
+        }));
+        setAiScanResult({
+          visualAudit: data.visualAudit,
+          criticalCheck: data.criticalCheck,
+          fallbackActive: !!data.fallbackActive,
+          errorHint: data.errorHint
+        });
+        if (data.aiPending) {
+          triggerToast("Manual entry enabled (Pending AI Analysis status assigned).");
+        } else {
+          triggerToast(`AI Auto-Filled: "${data.title}" in ${data.category}`);
+        }
+      } else {
+        triggerToast("AI couldn't generate a clear title or category.");
+      }
+    } catch (err: any) {
+      console.error("AI Analysis error:", err);
+      triggerToast(`AI Analysis failed: ${err.message || err}`);
+    } finally {
+      setAiAnalyzing(false);
+    }
+  };
+
+  const handleReAnalyzePortfolioItem = async (item: PortfolioItem) => {
+    triggerToast("Initiating Gemini AI analysis for pending item...");
+    try {
+      let base64Image = item.imageUrl;
+
+      if (!item.imageUrl.startsWith('data:')) {
+        try {
+          const response = await fetch(item.imageUrl);
           const blob = await response.blob();
           base64Image = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -253,36 +340,40 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
       const data = await res.json();
       if (data.title || data.category) {
-        setPortfolioForm(prev => ({
-          ...prev,
-          title: data.title || prev.title,
-          category: data.category || prev.category
-        }));
-        setAiScanResult({
-          visualAudit: data.visualAudit,
-          criticalCheck: data.criticalCheck
-        });
-        triggerToast(`AI Auto-Filled: "${data.title}" in ${data.category}`);
+        const updatedItem: PortfolioItem = {
+          ...item,
+          title: data.title || item.title,
+          category: data.category || item.category,
+          description: data.description || item.description,
+          tags: data.tags || item.tags,
+          aiPending: !!data.aiPending
+        };
+        const updated = portfolioItems.map(p => p.id === item.id ? updatedItem : p);
+        syncPortfolio(updated);
+        logAdminAction(`Successfully ran AI analysis on pending artwork: ${updatedItem.title}`, 'portfolio');
+        if (data.aiPending) {
+          triggerToast("AI analysis bypassed (Gemini API still unconfigured).");
+        } else {
+          triggerToast(`AI Analysis complete! Auto-filled metadata saved.`);
+        }
       } else {
         triggerToast("AI couldn't generate a clear title or category.");
       }
     } catch (err: any) {
       console.error("AI Analysis error:", err);
       triggerToast(`AI Analysis failed: ${err.message || err}`);
-    } finally {
-      setAiAnalyzing(false);
     }
   };
-
+ 
   const analyzeSpotlightImage = async (imageSrc: string) => {
     if (!imageSrc) return;
     setSpotlightAiAnalyzing(true);
     setSpotlightAiScanResult(null);
     triggerToast("AI is scanning and analyzing the spotlight image...");
-
+ 
     try {
       let base64Image = imageSrc;
-
+ 
       if (!imageSrc.startsWith('data:')) {
         try {
           const response = await fetch(imageSrc);
@@ -297,18 +388,18 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           console.warn("Could not convert spotlight image URL to base64 on client, passing URL directly", e);
         }
       }
-
+ 
       const res = await fetch("/api/gemini/analyze-spotlight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64Image }),
       });
-
+ 
       if (!res.ok) {
         const errData = await res.json();
         throw new Error(errData.error || "Failed to scan spotlight image");
       }
-
+ 
       const data = await res.json();
       if (data.title || data.category) {
         setSpotlightForm({
@@ -321,9 +412,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         });
         setSpotlightAiScanResult({
           visualAudit: data.visualAudit,
-          criticalCheck: data.criticalCheck
+          criticalCheck: data.criticalCheck,
+          fallbackActive: !!data.fallbackActive,
+          errorHint: data.errorHint
         });
-        triggerToast(`AI Auto-Filled Spotlight: "${data.title}" in ${data.category}`);
+        if (data.fallbackActive) {
+          triggerToast(`Manual entry enabled (Gemini AI unconfigured / offline).`);
+        } else {
+          triggerToast(`AI Auto-Filled Spotlight: "${data.title}" in ${data.category}`);
+        }
       } else {
         triggerToast("AI couldn't generate spotlight content.");
       }
@@ -653,27 +750,34 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       reader.onload = async (e) => {
         const rawBase64 = e.target?.result as string;
         if (rawBase64) {
-          const base64Url = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
-          const approxSizeKb = Math.round((base64Url.length * 3) / 4 / 1024);
-          const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
-          
-          const newItem = {
-            id: `m-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-            name: file.name,
-            folder: activeMediaFolder,
-            url: base64Url,
-            size: sizeStr
-          };
-          
-          setMediaItems((prev) => {
-            const updated = [newItem, ...prev];
-            saveToDB('olamide_visuals_media', updated);
-            return updated;
-          });
-          uploadedCount++;
-          if (uploadedCount === files.length) {
-            logAdminAction(`Bulk uploaded ${uploadedCount} assets to folder ${activeMediaFolder}`, 'portfolio');
-            triggerToast(`Successfully uploaded ${uploadedCount} photos to ${activeMediaFolder}.`);
+          try {
+            const base64Url = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+            // Upload to Supabase Storage
+            const storageUrl = await uploadToSupabaseStorage(base64Url, file.name);
+            const approxSizeKb = Math.round((base64Url.length * 3) / 4 / 1024);
+            const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
+            
+            const newItem = {
+              id: `m-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              name: file.name,
+              folder: activeMediaFolder,
+              url: storageUrl,
+              size: sizeStr
+            };
+            
+            setMediaItems((prev) => {
+              const updated = [newItem, ...prev];
+              saveToDB('olamide_visuals_media', updated);
+              return updated;
+            });
+            uploadedCount++;
+            if (uploadedCount === files.length) {
+              logAdminAction(`Bulk uploaded ${uploadedCount} assets to folder ${activeMediaFolder}`, 'portfolio');
+              triggerToast(`Successfully uploaded ${uploadedCount} photos to ${activeMediaFolder}.`);
+            }
+          } catch (uploadErr: any) {
+            console.error("Bulk upload err:", uploadErr);
+            triggerToast(`Bulk upload failed for ${file.name}: ${uploadErr.message || uploadErr}`);
           }
         }
       };
@@ -743,11 +847,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       if (rawBase64) {
         try {
           const base64Url = await compressImageBase64(rawBase64, 1000, 1000, 0.75);
-          setInstagramForm(prev => ({ ...prev, imageUrl: base64Url }));
-          triggerToast("Image compressed and loaded successfully!");
-        } catch (err) {
-          console.error("Compression error:", err);
-          triggerToast("Failed to process image.");
+          // Upload to Supabase Storage
+          const storageUrl = await uploadToSupabaseStorage(base64Url, file.name);
+          setInstagramForm(prev => ({ ...prev, imageUrl: storageUrl }));
+          triggerToast("Image uploaded to Supabase Storage successfully!");
+        } catch (err: any) {
+          console.error("Upload error:", err);
+          triggerToast(`Failed to process image: ${err.message || err}`);
         }
       }
       setUploadingIg(false);
@@ -808,13 +914,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       if (rawBase64) {
         try {
           const base64Url = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
-          setSpotlightForm(prev => ({ ...prev, imageUrl: base64Url }));
-          triggerToast("Spotlight image loaded and compressed successfully!");
+          // Upload to Supabase Storage
+          const storageUrl = await uploadToSupabaseStorage(base64Url, file.name);
+          setSpotlightForm(prev => ({ ...prev, imageUrl: storageUrl }));
+          triggerToast("Spotlight image uploaded successfully!");
           // Automatically scan the uploaded spotlight image
-          analyzeSpotlightImage(base64Url);
-        } catch (err) {
-          console.error("Compression error:", err);
-          triggerToast("Failed to process image.");
+          analyzeSpotlightImage(storageUrl);
+        } catch (err: any) {
+          console.error("Upload error:", err);
+          triggerToast(`Failed to process image: ${err.message || err}`);
         }
       }
       setUploadingSpotlight(false);
@@ -940,6 +1048,42 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   // ---------------- PORTFOLIO ACTIONS ----------------
+  const handleEditPortfolioOpen = (item: PortfolioItem) => {
+    setEditingPortfolioItem(item);
+    setPortfolioForm({
+      ...item,
+      tags: item.tags || []
+    });
+    setAiScanResult(null); // Clear previous reports
+    setEditPortfolioModal(true);
+  };
+
+  const handleUpdatePortfolio = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPortfolioItem) return;
+
+    const updatedItem: PortfolioItem = {
+      ...editingPortfolioItem,
+      title: portfolioForm.title || 'Masterwork Portrait',
+      category: portfolioForm.category || 'Portraits',
+      imageUrl: portfolioForm.imageUrl || 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80',
+      description: portfolioForm.description || 'Editorial captured under professional studio conditions.',
+      aspect: portfolioForm.aspect || 'portrait',
+      location: portfolioForm.location || 'Ekpoma, Edo State',
+      year: portfolioForm.year || '2026',
+      tags: Array.isArray(portfolioForm.tags) ? portfolioForm.tags : [],
+      aiPending: portfolioForm.aiPending !== undefined ? portfolioForm.aiPending : editingPortfolioItem.aiPending
+    };
+
+    const updated = portfolioItems.map(p => p.id === updatedItem.id ? updatedItem : p);
+    syncPortfolio(updated);
+    logAdminAction(`Updated portfolio artwork metadata: ${updatedItem.title}`, 'portfolio');
+    setEditPortfolioModal(false);
+    setEditingPortfolioItem(null);
+    setPortfolioForm({});
+    triggerToast(`Portfolio piece updated successfully.`);
+  };
+
   const handleCreatePortfolio = (e: React.FormEvent) => {
     e.preventDefault();
     const newItem: PortfolioItem = {
@@ -950,7 +1094,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       description: portfolioForm.description || 'Editorial captured under professional studio conditions.',
       aspect: portfolioForm.aspect || 'portrait',
       location: portfolioForm.location || 'Ekpoma, Edo State',
-      year: portfolioForm.year || '2026'
+      year: portfolioForm.year || '2026',
+      tags: Array.isArray(portfolioForm.tags) ? portfolioForm.tags : [],
+      aiPending: portfolioForm.aiPending !== undefined ? portfolioForm.aiPending : false
     };
     syncPortfolio([newItem, ...portfolioItems]);
     logAdminAction(`Uploaded & featured new portfolio artwork: ${newItem.title}`, 'portfolio');
@@ -2365,20 +2511,58 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     
                     <div className="p-4 space-y-3">
                       <div className="space-y-1">
-                        <h4 className="text-sm font-bold text-white uppercase font-mono">{p.title}</h4>
+                        <div className="flex justify-between items-start gap-2">
+                          <h4 className="text-sm font-bold text-white uppercase font-mono">{p.title}</h4>
+                          {p.aiPending && (
+                            <span className="shrink-0 bg-amber-950/40 text-amber-400 border border-amber-500/20 text-[9px] px-1.5 py-0.5 font-mono uppercase rounded animate-pulse">
+                              Pending AI
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] text-zinc-500 font-mono">{p.location} • {p.year}</p>
                       </div>
                       <p className="text-xs text-zinc-400 font-light line-clamp-2">{p.description}</p>
+                      
+                      {p.tags && p.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {p.tags.map(t => (
+                            <span key={t} className="text-[9px] font-mono bg-white/5 border border-white/5 text-zinc-400 px-1.5 py-0.5 rounded">
+                              #{t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div className="p-4 border-t border-white/5 bg-black/40 flex justify-between items-center">
-                      <span className="text-[9px] font-mono text-gold uppercase tracking-widest">Watermarked</span>
-                      <button 
-                        onClick={() => handleDeletePortfolio(p.id)}
-                        className="text-zinc-500 hover:text-red-400 transition-colors focus:outline-none cursor-pointer"
-                      >
-                        <Trash2 className="w-4.5 h-4.5" />
-                      </button>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[9px] font-mono text-gold uppercase tracking-widest">Watermarked</span>
+                        {p.aiPending && (
+                          <button
+                            onClick={() => handleReAnalyzePortfolioItem(p)}
+                            className="bg-gold/10 hover:bg-gold hover:text-black border border-gold/20 text-gold font-mono text-[9px] uppercase px-2 py-0.5 transition-all flex items-center space-x-1 cursor-pointer"
+                            title="Re-run Gemini AI metadata scan"
+                          >
+                            <Sparkles className="w-2.5 h-2.5" />
+                            <span>Scan AI</span>
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <button
+                          onClick={() => handleEditPortfolioOpen(p)}
+                          className="text-zinc-500 hover:text-gold transition-colors focus:outline-none cursor-pointer"
+                          title="Edit metadata & details"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeletePortfolio(p.id)}
+                          className="text-zinc-500 hover:text-red-400 transition-colors focus:outline-none cursor-pointer"
+                        >
+                          <Trash2 className="w-4.5 h-4.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -4501,15 +4685,21 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
+                           triggerToast("Processing and uploading image to Supabase...");
                            const reader = new FileReader();
                            reader.onload = async (event) => {
                              const rawBase64 = event.target?.result as string;
                              if (rawBase64) {
-                               const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
-                               setPortfolioForm(prev => ({ ...prev, imageUrl: base64 }));
-                               triggerToast("Local file loaded and compressed successfully!");
-                               // Automatically scan whenever a file is uploaded!
-                               analyzePortfolioImage(base64);
+                               try {
+                                 const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+                                 const storageUrl = await uploadToSupabaseStorage(base64, file.name);
+                                 setPortfolioForm(prev => ({ ...prev, imageUrl: storageUrl }));
+                                 triggerToast("Image uploaded to Supabase Storage successfully!");
+                                 // Automatically scan whenever a file is uploaded!
+                                 analyzePortfolioImage(storageUrl);
+                               } catch (uploadErr: any) {
+                                 triggerToast(`Upload error: ${uploadErr.message || uploadErr}`);
+                               }
                              }
                            };
                            reader.readAsDataURL(file);
@@ -4548,20 +4738,61 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-zinc-500">Location</label>
-                  <input type="text" placeholder="e.g. Benin City" onChange={(e) => setPortfolioForm({...portfolioForm, location: e.target.value})} className="w-full px-3 py-2 bg-black border border-white/10 text-white" />
+                  <input 
+                    type="text" 
+                    value={portfolioForm.location || ''}
+                    placeholder="e.g. Benin City" 
+                    onChange={(e) => setPortfolioForm({...portfolioForm, location: e.target.value})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white outline-none focus:border-gold/50 transition-colors" 
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-zinc-500">Shoot Year</label>
-                  <input type="text" defaultValue="2026" onChange={(e) => setPortfolioForm({...portfolioForm, year: e.target.value})} className="w-full px-3 py-2 bg-black border border-white/10 text-white" />
+                  <input 
+                    type="text" 
+                    value={portfolioForm.year || '2026'}
+                    onChange={(e) => setPortfolioForm({...portfolioForm, year: e.target.value})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white outline-none focus:border-gold/50 transition-colors" 
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-zinc-500">Aspect Ratio</label>
-                  <select onChange={(e) => setPortfolioForm({...portfolioForm, aspect: e.target.value as any})} className="w-full px-3 py-2 bg-black border border-white/10 text-white">
+                  <select 
+                    value={portfolioForm.aspect || 'portrait'}
+                    onChange={(e) => setPortfolioForm({...portfolioForm, aspect: e.target.value as any})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white outline-none focus:border-gold/50 transition-colors"
+                  >
                     <option value="portrait">Portrait</option>
                     <option value="landscape">Landscape</option>
                     <option value="square">Square</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-500">Artwork Description</label>
+                <textarea 
+                  value={portfolioForm.description || ''} 
+                  onChange={(e) => setPortfolioForm({...portfolioForm, description: e.target.value})} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                  rows={2}
+                  placeholder="poetic backstory / visual concept (auto-generated by AI if scanned)"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-500">Aesthetic Tags (comma separated)</label>
+                <input 
+                  type="text" 
+                  value={portfolioForm.tags ? (Array.isArray(portfolioForm.tags) ? portfolioForm.tags.join(', ') : portfolioForm.tags) : ''} 
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const tagsArray = value.split(',').map(t => t.trim()).filter(Boolean);
+                    setPortfolioForm({...portfolioForm, tags: tagsArray as any});
+                  }} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                  placeholder="e.g. vintage, outdoor, portrait, intimate"
+                />
               </div>
 
               <button 
@@ -4577,6 +4808,153 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 ) : (
                   <span>Publish Masterwork</span>
                 )}
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Edit Portfolio Modal */}
+      {editPortfolioModal && editingPortfolioItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-xs animate-fade-in">
+          <motion.div 
+            className="bg-[#0A0A0A] border border-white/10 w-full max-w-md p-8 space-y-6 relative font-mono text-xs text-zinc-300"
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+          >
+            <div className="flex justify-between items-center pb-3 border-b border-white/5">
+              <h3 className="text-sm font-bold text-white uppercase font-mono">Edit Artwork Metadata</h3>
+              <button 
+                onClick={() => {
+                  setEditPortfolioModal(false);
+                  setEditingPortfolioItem(null);
+                  setPortfolioForm({});
+                }} 
+                className="text-zinc-500 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdatePortfolio} className="space-y-4 text-xs font-mono">
+              <div className="space-y-1.5">
+                <label className="text-zinc-500">Artwork Title</label>
+                <input 
+                  type="text" 
+                  value={portfolioForm.title || ''} 
+                  required 
+                  onChange={(e) => setPortfolioForm({...portfolioForm, title: e.target.value})} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                  placeholder="e.g. Whispers in the Sahara"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-500">Portfolio Category</label>
+                <select 
+                  value={portfolioForm.category || 'Portraits'} 
+                  onChange={(e) => setPortfolioForm({...portfolioForm, category: e.target.value as any})} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors"
+                >
+                  <option value="Weddings">Weddings</option>
+                  <option value="Portraits">Portraits</option>
+                  <option value="Fashion">Fashion</option>
+                  <option value="Graduation">Graduation</option>
+                  <option value="Behind The Scenes">Behind The Scenes</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <label className="text-zinc-500">Artwork Image URL</label>
+                </div>
+                <input 
+                  type="text" 
+                  value={portfolioForm.imageUrl || ''} 
+                  required 
+                  onChange={(e) => setPortfolioForm({...portfolioForm, imageUrl: e.target.value})} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-zinc-500">Location</label>
+                  <input 
+                    type="text" 
+                    value={portfolioForm.location || ''}
+                    placeholder="e.g. Benin City" 
+                    onChange={(e) => setPortfolioForm({...portfolioForm, location: e.target.value})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white outline-none focus:border-gold/50 transition-colors" 
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-zinc-500">Shoot Year</label>
+                  <input 
+                    type="text" 
+                    value={portfolioForm.year || '2026'}
+                    onChange={(e) => setPortfolioForm({...portfolioForm, year: e.target.value})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white outline-none focus:border-gold/50 transition-colors" 
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-zinc-500">Aspect Ratio</label>
+                  <select 
+                    value={portfolioForm.aspect || 'portrait'}
+                    onChange={(e) => setPortfolioForm({...portfolioForm, aspect: e.target.value as any})} 
+                    className="w-full px-3 py-2 bg-black border border-white/10 text-white outline-none focus:border-gold/50 transition-colors"
+                  >
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                    <option value="square">Square</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-500">Artwork Description</label>
+                <textarea 
+                  value={portfolioForm.description || ''} 
+                  onChange={(e) => setPortfolioForm({...portfolioForm, description: e.target.value})} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                  rows={2}
+                  placeholder="poetic backstory / visual concept"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-500">Aesthetic Tags (comma separated)</label>
+                <input 
+                  type="text" 
+                  value={portfolioForm.tags ? (Array.isArray(portfolioForm.tags) ? portfolioForm.tags.join(', ') : portfolioForm.tags) : ''} 
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const tagsArray = value.split(',').map(t => t.trim()).filter(Boolean);
+                    setPortfolioForm({...portfolioForm, tags: tagsArray as any});
+                  }} 
+                  className="w-full px-3 py-2 bg-black border border-white/10 text-white focus:border-gold/50 outline-none transition-colors" 
+                  placeholder="e.g. vintage, outdoor, portrait, intimate"
+                />
+              </div>
+
+              <div className="flex items-center space-x-2 bg-black/50 p-2.5 border border-white/5">
+                <input
+                  type="checkbox"
+                  id="edit-ai-pending"
+                  checked={!!portfolioForm.aiPending}
+                  onChange={(e) => setPortfolioForm({...portfolioForm, aiPending: e.target.checked})}
+                  className="cursor-pointer"
+                />
+                <label htmlFor="edit-ai-pending" className="text-[10px] text-zinc-400 cursor-pointer select-none">
+                  Mark as Pending AI Analysis status
+                </label>
+              </div>
+
+              <button 
+                type="submit" 
+                className="w-full py-3 bg-gold hover:bg-white text-black uppercase font-bold text-xs tracking-wider cursor-pointer transition-colors"
+              >
+                Save Changes
               </button>
             </form>
           </motion.div>
@@ -4614,26 +4992,33 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
                         const file = e.target.files[0];
+                        triggerToast("Uploading image to Supabase Storage...");
                         const reader = new FileReader();
                         reader.onload = async (event) => {
                           const rawBase64 = event.target?.result as string;
                           if (rawBase64) {
-                            const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
-                            const approxSizeKb = Math.round((base64.length * 3) / 4 / 1024);
-                            const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
-                            const nameInp = document.getElementById('modal-media-name') as HTMLInputElement;
-                            if (nameInp && !nameInp.value) {
-                              nameInp.value = file.name;
+                            try {
+                              const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
+                              const storageUrl = await uploadToSupabaseStorage(base64, file.name);
+                              const approxSizeKb = Math.round((base64.length * 3) / 4 / 1024);
+                              const sizeStr = approxSizeKb > 1024 ? `${(approxSizeKb / 1024).toFixed(1)} MB` : `${approxSizeKb} KB`;
+                              
+                              const nameInp = document.getElementById('modal-media-name') as HTMLInputElement;
+                              if (nameInp && !nameInp.value) {
+                                nameInp.value = file.name;
+                              }
+                              const urlInp = document.getElementById('modal-media-url') as HTMLInputElement;
+                              if (urlInp) {
+                                urlInp.value = storageUrl;
+                              }
+                              const sizeInp = document.getElementById('modal-media-size') as HTMLInputElement;
+                              if (sizeInp) {
+                                sizeInp.value = sizeStr;
+                              }
+                              triggerToast('Image uploaded and registered successfully!');
+                            } catch (err: any) {
+                              triggerToast(`Storage upload failed: ${err.message || err}`);
                             }
-                            const urlInp = document.getElementById('modal-media-url') as HTMLInputElement;
-                            if (urlInp) {
-                              urlInp.value = base64;
-                            }
-                            const sizeInp = document.getElementById('modal-media-size') as HTMLInputElement;
-                            if (sizeInp) {
-                              sizeInp.value = sizeStr;
-                            }
-                            triggerToast('Image loaded successfully.');
                           }
                         };
                         reader.readAsDataURL(file);

@@ -22,6 +22,8 @@ export interface PortfolioItem {
   aspect: 'portrait' | 'landscape' | 'square';
   location: string;
   year: string;
+  tags?: string[];
+  aiPending?: boolean;
 }
 
 export interface Testimonial {
