@@ -520,6 +520,51 @@ export const saveToDB = <T>(key: string, data: T): void => {
     // Save locally (updates memory cache & tries writing to localStorage)
     saveToLocalOnly(key, data);
 
+    // Sync to Supabase automatically
+    const KEY_TO_SUPABASE_TABLE: Record<string, string> = {
+      'olamide_visuals_bookings': 'bookings',
+      'olamide_visuals_crew': 'crew',
+      'olamide_visuals_blog': 'blog',
+      'olamide_visuals_messages': 'messages',
+      'olamide_visuals_portfolio_items': 'portfolio_items',
+      'olamide_visuals_instagram_posts': 'instagram',
+      'olamide_visuals_spotlight': 'spotlight',
+      'olamide_visuals_media': 'media',
+      'olamide_visuals_transactions': 'transactions',
+      'olamide_visuals_logs': 'logs',
+    };
+    const supTable = KEY_TO_SUPABASE_TABLE[key];
+    if (supTable && Array.isArray(data)) {
+      const mapped = data.map(item => {
+        const clone = { ...item };
+        if (!clone.id) {
+          clone.id = Math.random().toString(36).substring(2, 11);
+        }
+        return clone;
+      });
+      fetch("/api/supabase/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tableName: supTable,
+          records: mapped
+        })
+      })
+      .then(async (res) => {
+        const resJson = await res.json();
+        if (!res.ok) {
+          console.warn(`[SUPABASE AUTO-SYNC NOTICE] Could not auto-sync ${key} to ${supTable}:`, resJson.error || res.statusText);
+        } else if (resJson.tableMissing) {
+          console.log(`[SUPABASE AUTO-SYNC NOTICE] Table '${supTable}' is not yet created on Supabase. Falling back to local state.`);
+        } else {
+          console.log(`[SUPABASE AUTO-SYNC SUCCESS] Successfully synchronized ${mapped.length} records to Supabase table '${supTable}'`);
+        }
+      })
+      .catch(err => {
+        console.warn(`[SUPABASE AUTO-SYNC NOTICE] Error auto-syncing ${key} to ${supTable}:`, err);
+      });
+    }
+
     // Dynamic cloud sync configuration
     const KEY_TO_COLLECTION: Record<string, string> = {
       'olamide_visuals_bookings': 'bookings',
@@ -546,6 +591,43 @@ export const saveToDB = <T>(key: string, data: T): void => {
         }
       }).catch(() => {});
     } else if (key === 'olamide_visuals_content') {
+      // Sync to Supabase content table
+      const contentData = data as any;
+      const flatContent = {
+        id: 'main',
+        biography: contentData?.about?.biography || '',
+        profileImage: contentData?.about?.profileImage || '',
+        businessAddress: contentData?.about?.businessAddress || '',
+        logoText: contentData?.branding?.logoText || '',
+        tagline: contentData?.branding?.tagline || '',
+        primaryColor: contentData?.branding?.primaryColor || '',
+        fontFamily: contentData?.branding?.fontFamily || '',
+        faviconUrl: contentData?.branding?.faviconUrl || '',
+        heroTitle: contentData?.hero?.title || '',
+        heroSubTitle: contentData?.hero?.subTitle || '',
+        heroCtaText: contentData?.hero?.ctaText || ''
+      };
+      
+      fetch("/api/supabase/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tableName: "content",
+          records: [flatContent]
+        })
+      })
+      .then(async (res) => {
+        const resJson = await res.json();
+        if (!res.ok) {
+          console.error(`[SUPABASE AUTO-SYNC ERROR] Failed to sync content to 'content' table:`, resJson.error || res.statusText);
+        } else {
+          console.log(`[SUPABASE AUTO-SYNC SUCCESS] Successfully synchronized content to Supabase table 'content'`);
+        }
+      })
+      .catch(err => {
+        console.error(`[SUPABASE AUTO-SYNC EXCEPTION] Error syncing content:`, err);
+      });
+
       import('../firebase').then(m => {
         const currentUser = m.auth.currentUser;
         const isAdmin = currentUser && (
@@ -587,6 +669,15 @@ export const saveToDB = <T>(key: string, data: T): void => {
         oldList.forEach(oldItem => {
           const id = oldItem.id || oldItem.txId || oldItem.bookingId;
           if (id && !newList.some(newItem => (newItem.id || newItem.txId || newItem.bookingId) === id)) {
+            // Also auto-delete from Supabase if table mapping exists
+            if (supTable) {
+              fetch("/api/supabase/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tableName: supTable, id })
+              }).catch(err => console.error("Supabase auto-delete error:", err));
+            }
+
             if (isAdmin || !['bookings', 'messages'].includes(coll)) {
               m.deleteItemFromCloud(coll, id).catch(() => {});
             }

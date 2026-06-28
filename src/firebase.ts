@@ -12,7 +12,7 @@ import {
   signOut
 } from 'firebase/auth';
 import { 
-  getFirestore, 
+  initializeFirestore, 
   collection, 
   doc, 
   onSnapshot, 
@@ -26,7 +26,9 @@ import { saveToLocalOnly } from './admin/db';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
 export const auth = getAuth();
 
 // Test Connection to Firestore with robust retries and Vercel-optimized logs

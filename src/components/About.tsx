@@ -5,37 +5,52 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Award, Zap, Heart } from 'lucide-react';
-import { getFromDB } from '../admin/db';
-
-const DEFAULT_BIOGRAPHY = `Olamide Visuals is a luxury, elite creative studio born in Ekpoma, Edo State, Nigeria. Founded on the belief that photography is a sublime medium of preservation, we specialize in illuminating raw emotional narratives and transforming brief human intersections into museum-quality masterpieces.
-
-Olamide approaches every frame with an artist’s meticulous precision. Whether directing vibrant traditional weddings, styling avant-garde editorial runway layouts, or framing academic triumphs, our dedication to immaculate composition and elite color-grading delivers visuals that resonate across continents.`;
-
-const DEFAULT_PROFILE_IMAGE = 'https://images.unsplash.com/photo-1452780212940-6f5c0d14d848?auto=format&fit=crop&w=1200&q=80';
+import { Award, Zap, Heart, RefreshCw } from 'lucide-react';
 
 export default function About() {
-  const [aboutData, setAboutData] = useState(() => {
-    const content = getFromDB<any>('olamide_visuals_content', null);
-    return {
-      biography: content?.about?.biography || DEFAULT_BIOGRAPHY,
-      profileImage: content?.about?.profileImage || DEFAULT_PROFILE_IMAGE
-    };
-  });
+  const [aboutData, setAboutData] = useState<{ biography: string; profileImage: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAboutContent = () => {
+    fetch('/api/supabase/fetch?table=content')
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load content: ${res.statusText}`);
+        }
+        return res.json();
+      })
+      .then((resJson) => {
+        if (resJson.success && resJson.data && resJson.data.length > 0) {
+          // Find the record with id = 'main'
+          const mainRecord = resJson.data.find((item: any) => item.id === 'main') || resJson.data[0];
+          setAboutData({
+            biography: mainRecord.biography || '',
+            profileImage: mainRecord.profileImage || ''
+          });
+        } else {
+          // Empty state: strictly disable default fallback
+          setAboutData({
+            biography: '',
+            profileImage: ''
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("About page fetch error:", err);
+        setError(err.message || String(err));
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
 
   useEffect(() => {
-    const handleStorageChange = () => {
-      const content = getFromDB<any>('olamide_visuals_content', null);
-      if (content?.about) {
-        setAboutData({
-          biography: content.about.biography || DEFAULT_BIOGRAPHY,
-          profileImage: content.about.profileImage || DEFAULT_PROFILE_IMAGE
-        });
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    fetchAboutContent();
+    
+    // Poll for real-time synchronization every 8 seconds
+    const interval = setInterval(fetchAboutContent, 8000);
+    return () => clearInterval(interval);
   }, []);
 
   const values = [
@@ -56,7 +71,9 @@ export default function About() {
     },
   ];
 
-  const paragraphs = aboutData.biography.split(/\n+/).filter((p: string) => p.trim().length > 0);
+  const paragraphs = aboutData?.biography 
+    ? aboutData.biography.split(/\n+/).filter((p: string) => p.trim().length > 0)
+    : [];
 
   return (
     <section id="about" className="py-24 bg-[#0A0A0A] border-t border-white/5 overflow-hidden relative">
@@ -81,14 +98,21 @@ export default function About() {
               <div className="absolute -top-3 -left-3 w-6 h-6 border-t-2 border-l-2 border-gold z-10" />
               <div className="absolute -bottom-3 -right-3 w-6 h-6 border-b-2 border-r-2 border-gold z-10" />
 
-              {/* Real portrait photo (Generated) */}
+              {/* Real portrait photo */}
               <div className="w-full h-full overflow-hidden bg-[#080808] border border-white/5 relative z-10 group">
-                <img
-                  src={aboutData.profileImage}
-                  alt="Olamide, Lead Photographer"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700"
-                />
+                {aboutData?.profileImage ? (
+                  <img
+                    src={aboutData.profileImage}
+                    alt="Olamide, Lead Photographer"
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700"
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-zinc-600 bg-black">
+                    <span className="text-[10px] font-mono tracking-widest uppercase">No Profile Image</span>
+                    <span className="text-[9px] font-mono text-zinc-800 mt-1">CURATE ON SUPABASE</span>
+                  </div>
+                )}
                 {/* Visual lens reflection element */}
                 <div className="absolute inset-0 bg-gradient-to-tr from-gold/0 via-gold/5 to-transparent pointer-events-none" />
               </div>
@@ -109,9 +133,28 @@ export default function About() {
             </div>
 
             <div className="space-y-6 text-zinc-300 font-light text-base leading-relaxed text-center lg:text-left">
-              {paragraphs.map((para: string, idx: number) => (
-                <p key={idx}>{para}</p>
-              ))}
+              {loading && !aboutData ? (
+                <div className="space-y-3">
+                  <div className="h-4 bg-zinc-900 animate-pulse w-full" />
+                  <div className="h-4 bg-zinc-900 animate-pulse w-11/12" />
+                  <div className="h-4 bg-zinc-900 animate-pulse w-4/5" />
+                </div>
+              ) : error ? (
+                <div className="p-4 bg-red-950/20 border border-red-500/20 text-red-300 font-mono text-xs rounded-none text-left">
+                  <span className="font-bold uppercase tracking-widest block mb-1">Database Error</span>
+                  <p>Failed to retrieve biography from Supabase. Fallbacks are disabled.</p>
+                  <p className="text-[10px] text-zinc-500 mt-2">Error: {error}</p>
+                </div>
+              ) : paragraphs.length > 0 ? (
+                paragraphs.map((para: string, idx: number) => (
+                  <p key={idx}>{para}</p>
+                ))
+              ) : (
+                <div className="p-4 bg-zinc-950 border border-white/5 text-zinc-500 font-mono text-xs rounded-none text-left">
+                  <span className="font-bold text-gold uppercase tracking-widest block mb-1">Awaiting Content Curation</span>
+                  <p>Awaiting biography narration inside Supabase table 'content'. Use the Admin Portal to curate and sync main metadata.</p>
+                </div>
+              )}
             </div>
 
             {/* Core Values / Strengths Grid */}

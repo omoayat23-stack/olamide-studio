@@ -6,7 +6,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, Maximize2, MapPin, Calendar, X } from 'lucide-react';
-import { PORTFOLIO_ITEMS } from '../data';
 import { PortfolioItem } from '../types';
 
 export default function Portfolio() {
@@ -15,62 +14,57 @@ export default function Portfolio() {
 
   const categories = ['All', 'Portraits', 'Weddings', 'Events', 'Fashion', 'Lifestyle', 'Commercial', 'Graduation', 'Behind The Scenes'];
 
-  const [portfolioList, setPortfolioList] = useState<PortfolioItem[]>(() => {
-    const localPortfolio = localStorage.getItem('olamide_visuals_portfolio_items');
-    const portfolio: PortfolioItem[] = localPortfolio ? JSON.parse(localPortfolio) : PORTFOLIO_ITEMS;
-
-    const localMedia = localStorage.getItem('olamide_visuals_media');
-    const mediaItems = localMedia ? JSON.parse(localMedia) : [];
-
-    const merged = [...portfolio];
-    mediaItems.forEach((m: any) => {
-      if (!merged.some(p => p.imageUrl === m.url)) {
-        merged.push({
-          id: m.id,
-          title: m.name.replace(/\.[^/.]+$/, "").replace(/_/g, " "),
-          category: m.folder,
-          imageUrl: m.url,
-          description: `Behind-the-scenes masterwork.`,
-          aspect: 'portrait',
-          location: 'Ekpoma Studio',
-          year: '2026'
-        });
-      }
-    });
-    return merged;
-  });
+  const [portfolioList, setPortfolioList] = useState<PortfolioItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const syncDatabase = () => {
-      const localPortfolio = localStorage.getItem('olamide_visuals_portfolio_items');
-      const portfolio: PortfolioItem[] = localPortfolio ? JSON.parse(localPortfolio) : PORTFOLIO_ITEMS;
-
-      const localMedia = localStorage.getItem('olamide_visuals_media');
-      const mediaItems = localMedia ? JSON.parse(localMedia) : [];
-
-      const merged = [...portfolio];
-      mediaItems.forEach((m: any) => {
-        if (!merged.some(p => p.imageUrl === m.url)) {
-          merged.push({
-            id: m.id,
-            title: m.name.replace(/\.[^/.]+$/, "").replace(/_/g, " "),
-            category: m.folder,
-            imageUrl: m.url,
-            description: `Behind-the-scenes masterwork.`,
-            aspect: 'portrait',
-            location: 'Ekpoma Studio',
-            year: '2026'
-          });
+    let active = true;
+    const fetchPortfolio = async () => {
+      try {
+        const res = await fetch('/api/supabase/fetch?table=portfolio_items');
+        if (!res.ok) {
+          throw new Error(`Failed to fetch from Supabase: ${res.statusText}`);
         }
-      });
-      setPortfolioList(merged);
+        const result = await res.json();
+        if (result.success && active) {
+          // Map properties safely from table schema if needed
+          const items = (result.data || []).map((item: any) => ({
+            id: item.id,
+            title: item.title,
+            category: item.category || 'All',
+            imageUrl: item.imageUrl || item.url, // Handle both imageUrl and url keys
+            description: item.description || '',
+            aspect: item.aspect || 'portrait',
+            location: item.location || 'Ekpoma Studio',
+            year: item.year || '2026',
+            tags: item.tags || []
+          }));
+          setPortfolioList(items);
+          setError(null);
+        } else if (active) {
+          throw new Error(result.error || 'Failed to fetch');
+        }
+      } catch (err: any) {
+        console.error("Error loading portfolio from Supabase:", err);
+        if (active) {
+          setError(err.message || 'Error loading portfolio.');
+          setPortfolioList([]); // Enforce clean empty list on failure, absolutely no fallback!
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
     };
 
-    window.addEventListener('storage', syncDatabase);
-    const pollInterval = setInterval(syncDatabase, 2000);
+    fetchPortfolio();
+
+    // Regular polling for real-time synchronization across devices and browsers
+    const pollInterval = setInterval(fetchPortfolio, 5000);
 
     return () => {
-      window.removeEventListener('storage', syncDatabase);
+      active = false;
       clearInterval(pollInterval);
     };
   }, []);
@@ -136,74 +130,92 @@ export default function Portfolio() {
         </div>
 
         {/* CSS Masonry Gallery Grid */}
-        <motion.div
-          id="portfolio-gallery-grid"
-          layout
-          className="columns-1 sm:columns-2 lg:columns-3 gap-6 space-y-6 [column-fill:_balance]"
-        >
-          <AnimatePresence mode="popLayout">
-            {filteredItems.map((item, index) => (
-              <motion.div
-                key={item.id}
-                id={`portfolio-item-${item.id}`}
-                layout
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ duration: 0.5 }}
-                className="break-inside-avoid bg-[#080808] border border-white/5 overflow-hidden relative group cursor-pointer"
-                onClick={() => setSelectedItemIndex(index)}
-              >
-                {/* Image element with premium styling */}
-                <div className="w-full relative overflow-hidden bg-[#0A0A0A]">
-                  <img
-                    src={item.imageUrl}
-                    alt={item.title}
-                    referrerPolicy="no-referrer"
-                    className="w-full object-cover group-hover:scale-105 transition-all duration-700 ease-out brightness-90 group-hover:brightness-100"
-                    style={{
-                      aspectRatio: item.aspect === 'portrait' ? '3/4' : item.aspect === 'landscape' ? '4/3' : '1/1',
-                    }}
-                  />
-                  
-                  {/* Subtle vignette layer */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                </div>
-
-                {/* Overlaid details on Hover */}
-                <div className="absolute inset-0 flex flex-col justify-between p-6 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
-                  {/* Top tags */}
-                  <div className="flex justify-between items-start">
-                    <span className="text-[10px] font-mono tracking-widest text-gold bg-black/90 px-2.5 py-1 uppercase">
-                      {item.category}
-                    </span>
-                    <div className="w-8 h-8 rounded-full bg-black/90 border border-white/10 flex items-center justify-center text-white">
-                      <Maximize2 className="w-3.5 h-3.5 text-gold" />
-                    </div>
+        {filteredItems.length > 0 ? (
+          <motion.div
+            id="portfolio-gallery-grid"
+            layout
+            className="columns-1 sm:columns-2 lg:columns-3 gap-6 space-y-6 [column-fill:_balance]"
+          >
+            <AnimatePresence mode="popLayout">
+              {filteredItems.map((item, index) => (
+                <motion.div
+                  key={item.id}
+                  id={`portfolio-item-${item.id}`}
+                  layout
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.5 }}
+                  className="break-inside-avoid bg-[#080808] border border-white/5 overflow-hidden relative group cursor-pointer"
+                  onClick={() => setSelectedItemIndex(index)}
+                >
+                  {/* Image element with premium styling */}
+                  <div className="w-full relative overflow-hidden bg-[#0A0A0A]">
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      referrerPolicy="no-referrer"
+                      className="w-full object-cover group-hover:scale-105 transition-all duration-700 ease-out brightness-90 group-hover:brightness-100"
+                      style={{
+                        aspectRatio: item.aspect === 'portrait' ? '3/4' : item.aspect === 'landscape' ? '4/3' : '1/1',
+                      }}
+                    />
+                    
+                    {/* Subtle vignette layer */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                   </div>
 
-                  {/* Bottom Captions */}
-                  <div className="space-y-1 transform translate-y-3 group-hover:translate-y-0 transition-transform duration-300">
-                    <h3 className="text-base font-sans font-bold text-white uppercase tracking-wider">
-                      {item.title}
-                    </h3>
-                    <p className="text-xs text-zinc-300 font-light line-clamp-1">
-                      {item.description}
-                    </p>
-                    <div className="flex items-center space-x-3 text-zinc-400 text-[10px] font-mono pt-1">
-                      <span className="flex items-center space-x-1">
-                        <MapPin className="w-3 h-3 text-gold" />
-                        <span>{item.location}</span>
+                  {/* Overlaid details on Hover */}
+                  <div className="absolute inset-0 flex flex-col justify-between p-6 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
+                    {/* Top tags */}
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] font-mono tracking-widest text-gold bg-black/90 px-2.5 py-1 uppercase">
+                        {item.category}
                       </span>
-                      <span>•</span>
-                      <span>{item.year}</span>
+                      <div className="w-8 h-8 rounded-full bg-black/90 border border-white/10 flex items-center justify-center text-white">
+                        <Maximize2 className="w-3.5 h-3.5 text-gold" />
+                      </div>
+                    </div>
+
+                    {/* Bottom Captions */}
+                    <div className="space-y-1 transform translate-y-3 group-hover:translate-y-0 transition-transform duration-300">
+                      <h3 className="text-base font-sans font-bold text-white uppercase tracking-wider">
+                        {item.title}
+                      </h3>
+                      <p className="text-xs text-zinc-300 font-light line-clamp-1">
+                        {item.description}
+                      </p>
+                      <div className="flex items-center space-x-3 text-zinc-400 text-[10px] font-mono pt-1">
+                        <span className="flex items-center space-x-1">
+                          <MapPin className="w-3 h-3 text-gold" />
+                          <span>{item.location}</span>
+                        </span>
+                        <span>•</span>
+                        <span>{item.year}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </motion.div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        ) : (
+          <div className="max-w-2xl mx-auto py-20 px-6 border border-dashed border-white/5 bg-black/40 text-center space-y-6">
+            <div className="w-12 h-12 rounded-full border border-gold/20 flex items-center justify-center mx-auto bg-gold/5">
+              <span className="text-gold text-sm font-mono">!</span>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold text-white uppercase font-mono tracking-widest">No Masterpieces Found</h3>
+              <p className="text-xs text-zinc-400 font-light max-w-sm mx-auto leading-relaxed">
+                {loading 
+                  ? 'Initiating deep connection to Supabase storage to load visual curated assets...' 
+                  : error 
+                    ? `Supabase synchronization error: ${error}. Demo fallbacks have been fully disabled.` 
+                    : 'The Administrative Portal has successfully removed standard demo items. Upload and publish your works to display them here.'}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Fullscreen Lightbox Preview Overlay */}
         <AnimatePresence>

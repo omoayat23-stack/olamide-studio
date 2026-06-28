@@ -1,15 +1,146 @@
 import "dotenv/config";
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
+import { v2 as cloudinary } from "cloudinary";
 
 const app = express();
 
 // Set body parser limits for handling large base64 uploaded images
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ limit: "15mb", extended: true }));
+
+// Robust utility to parse, validate, and retrieve Cloudinary credentials with file cache fallback
+function getCloudinaryConfig(): { cloudName: string | null; apiKey: string | null; apiSecret: string | null } {
+  let cloudName: string | null = null;
+  let apiKey: string | null = null;
+  let apiSecret: string | null = null;
+
+  // 1. Try reading from the server-side file cache first (so Admin Panel edits override process.env)
+  try {
+    const cachePath = path.join(process.cwd(), "cloudinary-config.json");
+    if (fs.existsSync(cachePath)) {
+      const raw = fs.readFileSync(cachePath, "utf-8");
+      const cached = JSON.parse(raw);
+      if (cached.cloudName && cached.apiKey && cached.apiSecret) {
+        cloudName = cached.cloudName.trim();
+        apiKey = cached.apiKey.trim();
+        apiSecret = cached.apiSecret.trim();
+        console.log("[CLOUDINARY CONFIG] Loaded overridden/tested credentials from server cache (cloudinary-config.json).");
+      }
+    }
+  } catch (err) {
+    console.warn("[CLOUDINARY CONFIG] Error reading cloudinary-config.json:", err);
+  }
+
+  // 2. Fallback to process.env if cache didn't have all required fields
+  if (!cloudName || !apiKey || !apiSecret) {
+    let envCloudName = process.env.CLOUDINARY_CLOUD_NAME || null;
+    let envApiKey = process.env.CLOUDINARY_API_KEY || null;
+    let envApiSecret = process.env.CLOUDINARY_API_SECRET || null;
+
+    if (envCloudName) envCloudName = envCloudName.trim();
+    if (envApiKey) envApiKey = envApiKey.trim();
+    if (envApiSecret) envApiSecret = envApiSecret.trim();
+
+    if (!cloudName && envCloudName) cloudName = envCloudName;
+    if (!apiKey && envApiKey) apiKey = envApiKey;
+    if (!apiSecret && envApiSecret) apiSecret = envApiSecret;
+  }
+
+  return { cloudName, apiKey, apiSecret };
+}
+
+// Robust utility to parse, validate, and retrieve Supabase credentials with file cache fallback
+function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
+  // Helper to validate URL structure using native URL constructor
+  const isValidUrlFormat = (uri: string): boolean => {
+    try {
+      new URL(uri);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Check if Supabase has been explicitly disconnected in the cache override, or if we have valid credentials there
+  let url: string | null = null;
+  let anonKey: string | null = null;
+  let explicitlyDisconnected = false;
+
+  try {
+    const cachePath = path.join(process.cwd(), "supabase-config.json");
+    if (fs.existsSync(cachePath)) {
+      const raw = fs.readFileSync(cachePath, "utf-8");
+      const cached = JSON.parse(raw);
+      if (cached && cached.disconnected === true) {
+        explicitlyDisconnected = true;
+      } else if (cached && cached.url && cached.anonKey) {
+        let cachedUrl = cached.url.trim();
+        let cachedAnon = cached.anonKey.trim();
+
+        if (
+          cachedUrl !== "" &&
+          !cachedUrl.includes("YOUR_SUPABASE_URL") &&
+          !cachedUrl.includes("placeholder") &&
+          (cachedUrl.startsWith("http://") || cachedUrl.startsWith("https://")) &&
+          isValidUrlFormat(cachedUrl) &&
+          cachedAnon !== "" &&
+          !cachedAnon.includes("YOUR_SUPABASE") &&
+          !cachedAnon.includes("placeholder")
+        ) {
+          url = cachedUrl;
+          anonKey = cachedAnon;
+          console.log("[SUPABASE CONFIG] Loaded valid credentials from server cache (supabase-config.json).");
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[SUPABASE CONFIG] Error reading supabase-config.json:", err);
+  }
+
+  if (explicitlyDisconnected) {
+    return { url: null, anonKey: null };
+  }
+
+  // Fallback to process.env if cache didn't have valid credentials
+  if (!url || !anonKey) {
+    let envUrl = process.env.SUPABASE_URL || null;
+    let envAnonKey = process.env.SUPABASE_ANON_KEY || null;
+
+    if (envUrl) {
+      envUrl = envUrl.trim();
+      if (
+        envUrl === "" || 
+        envUrl.includes("YOUR_SUPABASE_URL") || 
+        envUrl.includes("placeholder") || 
+        (!envUrl.startsWith("http://") && !envUrl.startsWith("https://")) ||
+        !isValidUrlFormat(envUrl)
+      ) {
+        envUrl = null;
+      }
+    }
+
+    if (envAnonKey) {
+      envAnonKey = envAnonKey.trim();
+      if (
+        envAnonKey === "" || 
+        envAnonKey.includes("YOUR_SUPABASE") || 
+        envAnonKey.includes("placeholder")
+      ) {
+        envAnonKey = null;
+      }
+    }
+
+    if (!url && envUrl) url = envUrl;
+    if (!anonKey && envAnonKey) anonKey = envAnonKey;
+  }
+
+  return { url, anonKey };
+}
 
   // API endpoints
   app.get("/api/health", (req, res) => {
@@ -18,10 +149,78 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
   // Supabase API Integration
   app.get("/api/supabase/config", (req, res) => {
+    const { url, anonKey } = getSupabaseConfig();
     res.json({
-      envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
-      url: process.env.SUPABASE_URL ? `${process.env.SUPABASE_URL.substring(0, 20)}...` : null
+      envConfigured: !!(url && anonKey),
+      url: url ? `${url.substring(0, 20)}...` : null
     });
+  });
+
+  // Cloudinary API Integration
+  app.get("/api/cloudinary/config", (req, res) => {
+    const { cloudName, apiKey, apiSecret } = getCloudinaryConfig();
+    res.json({
+      envConfigured: !!(cloudName && apiKey && apiSecret),
+      cloudName: cloudName
+    });
+  });
+
+  app.post("/api/cloudinary/test", async (req, res) => {
+    try {
+      const { cloudName: defaultCloud, apiKey: defaultKey, apiSecret: defaultSecret } = getCloudinaryConfig();
+      const cloudName = req.body.cloudName || defaultCloud;
+      const apiKey = req.body.apiKey || defaultKey;
+      const apiSecret = req.body.apiSecret || defaultSecret;
+
+      if (!cloudName || !apiKey || !apiSecret) {
+        return res.status(400).json({
+          success: false,
+          error: "Cloud Name, API Key, and API Secret are required."
+        });
+      }
+
+      cloudinary.config({
+        cloud_name: cloudName,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        secure: true
+      });
+
+      // Simple Ping-like request to check API keys
+      try {
+        const result = await cloudinary.api.ping();
+        
+        // Cache verified credentials on the server
+        try {
+          fs.writeFileSync(
+            path.join(process.cwd(), "cloudinary-config.json"),
+            JSON.stringify({ cloudName, apiKey, apiSecret }, null, 2),
+            "utf-8"
+          );
+          console.log("[CLOUDINARY TEST] Successfully cached verified Cloudinary credentials to cloudinary-config.json");
+        } catch (fsErr) {
+          console.error("[CLOUDINARY TEST] Error caching credentials to file:", fsErr);
+        }
+
+        return res.json({
+          success: true,
+          message: "Successfully connected to Cloudinary API!",
+          details: JSON.stringify(result, null, 2)
+        });
+      } catch (pingErr: any) {
+        console.error("[CLOUDINARY PING ERROR]", pingErr);
+        return res.status(401).json({
+          success: false,
+          error: `Cloudinary validation failed: ${pingErr.message || JSON.stringify(pingErr)}`
+        });
+      }
+    } catch (err: any) {
+      console.error("[CLOUDINARY TEST EXCEPTION]", err);
+      return res.status(500).json({
+        success: false,
+        error: `Unexpected error: ${err.message || err}`
+      });
+    }
   });
 
   // Robust helper for initializing Supabase client with retry validation and Vercel-optimized logging
@@ -74,8 +273,9 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
   app.post("/api/supabase/test", async (req, res) => {
     try {
-      const url = req.body.url || process.env.SUPABASE_URL;
-      const anonKey = req.body.anonKey || process.env.SUPABASE_ANON_KEY;
+      const { url: defaultUrl, anonKey: defaultAnonKey } = getSupabaseConfig();
+      const url = req.body.url || defaultUrl;
+      const anonKey = req.body.anonKey || defaultAnonKey;
 
       if (!url || !anonKey) {
         console.error("[SUPABASE TEST ENDPOINT] [ERROR] Missing Supabase URL or Anon Key credentials.");
@@ -85,14 +285,36 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
         });
       }
 
+      // Check URL format to prevent crashing on createClient
+      try {
+        new URL(url);
+      } catch (urlErr) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Supabase URL: Provided URL is malformed."
+        });
+      }
+
       const verificationResult = await verifySupabaseConnectionWithRetry(url, anonKey);
       
       if (verificationResult.success) {
+        // Cache verified credentials on the server
+        try {
+          fs.writeFileSync(
+            path.join(process.cwd(), "supabase-config.json"),
+            JSON.stringify({ url, anonKey }, null, 2),
+            "utf-8"
+          );
+          console.log("[SUPABASE TEST] Successfully cached verified Supabase credentials to supabase-config.json");
+        } catch (fsErr) {
+          console.error("[SUPABASE TEST] Error caching credentials to file:", fsErr);
+        }
+
         return res.json({
           success: true,
           message: "Successfully connected to Supabase API & Database!",
           details: verificationResult.details,
-          envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+          envConfigured: true
         });
       } else {
         const error = verificationResult.error;
@@ -100,7 +322,7 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
           success: false,
           error: error?.message || "Supabase API validation failed. Please check your URL and API credentials.",
           details: error,
-          envConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+          envConfigured: !!(defaultUrl && defaultAnonKey)
         });
       }
     } catch (error: any) {
@@ -112,10 +334,217 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
     }
   });
 
+  // Disconnect Supabase by setting disconnected flag and clearing stored file cache
+  app.post("/api/supabase/disconnect", (req, res) => {
+    try {
+      const cachePath = path.join(process.cwd(), "supabase-config.json");
+      fs.writeFileSync(
+        cachePath,
+        JSON.stringify({ disconnected: true }, null, 2),
+        "utf-8"
+      );
+      console.log("[SUPABASE DISCONNECT] Successfully wrote disconnect flag to supabase-config.json");
+      return res.json({
+        success: true,
+        message: "Successfully disconnected from Supabase. Connections have been deactivated, and the local credential cache is cleared."
+      });
+    } catch (err: any) {
+      console.error("[SUPABASE DISCONNECT ERROR]", err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || "Failed to clear Supabase configuration cache."
+      });
+    }
+  });
+
+  // Automated Integration and Connection Diagnostics
+  app.get("/api/diagnose/engine", async (req, res) => {
+    const report: any = {
+      timestamp: new Date().toISOString(),
+      environment: {
+        geminiApiKeyConfigured: !!process.env.GEMINI_API_KEY,
+        supabaseEnvUrlConfigured: !!process.env.SUPABASE_URL,
+        supabaseEnvKeyConfigured: !!process.env.SUPABASE_ANON_KEY,
+        cloudinaryEnvCloudConfigured: !!process.env.CLOUDINARY_CLOUD_NAME,
+        cloudinaryEnvKeyConfigured: !!process.env.CLOUDINARY_API_KEY,
+        cloudinaryEnvSecretConfigured: !!process.env.CLOUDINARY_API_SECRET,
+      },
+      supabase: {
+        status: "unconfigured",
+        url: null,
+        error: null,
+        connectionTest: null
+      },
+      cloudinary: {
+        status: "unconfigured",
+        cloudName: null,
+        error: null,
+        connectionTest: null
+      }
+    };
+
+    // 1. Supabase Diagnosis
+    try {
+      const { url, anonKey } = getSupabaseConfig();
+      if (url && anonKey) {
+        report.supabase.url = url;
+        const verification = await verifySupabaseConnectionWithRetry(url, anonKey, 1, 100);
+        if (verification.success) {
+          report.supabase.status = "connected";
+          report.supabase.connectionTest = "SUCCESS: Successfully queried database & schema metadata.";
+        } else {
+          report.supabase.status = "failed";
+          report.supabase.error = verification.error?.message || "Failed to query Supabase service.";
+        }
+      } else {
+        // Check if explicitly disconnected
+        const cachePath = path.join(process.cwd(), "supabase-config.json");
+        if (fs.existsSync(cachePath)) {
+          const raw = fs.readFileSync(cachePath, "utf-8");
+          const cached = JSON.parse(raw);
+          if (cached && cached.disconnected === true) {
+            report.supabase.status = "explicitly_disconnected";
+          }
+        }
+      }
+    } catch (err: any) {
+      report.supabase.status = "error";
+      report.supabase.error = err.message || String(err);
+    }
+
+    // 2. Cloudinary Diagnosis
+    try {
+      const { cloudName, apiKey, apiSecret } = getCloudinaryConfig();
+      if (cloudName && apiKey && apiSecret) {
+        report.cloudinary.cloudName = cloudName;
+        cloudinary.config({
+          cloud_name: cloudName,
+          api_key: apiKey,
+          api_secret: apiSecret,
+          secure: true
+        });
+        try {
+          const pingResult = await cloudinary.api.ping();
+          report.cloudinary.status = "connected";
+          report.cloudinary.connectionTest = `SUCCESS: Connected to Cloudinary Cloud. Status: ${JSON.stringify(pingResult)}`;
+        } catch (pingErr: any) {
+          report.cloudinary.status = "failed";
+          report.cloudinary.error = pingErr.message || String(pingErr);
+        }
+      }
+    } catch (err: any) {
+      report.cloudinary.status = "error";
+      report.cloudinary.error = err.message || String(err);
+    }
+
+    return res.json(report);
+  });
+
+  // Fetch all records from a Supabase table
+  app.get("/api/supabase/fetch", async (req, res) => {
+    try {
+      const table = req.query.table as string;
+      const { url, anonKey } = getSupabaseConfig();
+
+      if (!url || !anonKey) {
+        console.warn("[SUPABASE FETCH] Supabase is not configured or disconnected. Returning graceful empty data array.");
+        return res.json({ success: true, data: [], message: "Supabase is unconfigured or disconnected. Gracefully returning empty list." });
+      }
+
+      if (!table) {
+        return res.status(400).json({ success: false, error: "Missing 'table' query parameter." });
+      }
+
+      const supabase = createClient(url, anonKey);
+      console.log(`[SUPABASE FETCH] Fetching all records from table '${table}'...`);
+
+      const { data, error } = await supabase.from(table).select("*");
+
+      if (error) {
+        const isTableMissing = 
+          error.code === '42P01' || 
+          error.code === 'PGRST116' || 
+          (error.message && (
+            error.message.includes("Could not find the table") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("schema cache")
+          ));
+
+        if (isTableMissing) {
+          console.log(`[SUPABASE FETCH GRACEFUL FALLBACK] Table '${table}' does not exist on Supabase. Gracefully returning empty array.`);
+          return res.json({ 
+            success: true, 
+            data: [], 
+            message: `Table '${table}' does not exist yet. Please run the corresponding SQL schema in your Supabase SQL Editor.`,
+            tableMissing: true
+          });
+        }
+
+        console.error(`[SUPABASE FETCH ERROR] Error fetching from table '${table}':`, error);
+        return res.status(500).json({ success: false, error: error.message, details: error });
+      }
+
+      return res.json({ success: true, data: data || [] });
+    } catch (err: any) {
+      console.error("[SUPABASE FETCH FATAL ERROR]", err);
+      return res.status(500).json({ success: false, error: err.message || err });
+    }
+  });
+
+  // Delete a record from a Supabase table
+  app.post("/api/supabase/delete", async (req, res) => {
+    try {
+      const { tableName, id } = req.body;
+      const { url, anonKey } = getSupabaseConfig();
+
+      if (!url || !anonKey) {
+        return res.status(500).json({ success: false, error: "Supabase is not configured or credentials are invalid." });
+      }
+
+      if (!tableName || !id) {
+        return res.status(400).json({ success: false, error: "Missing tableName or id in request body." });
+      }
+
+      const supabase = createClient(url, anonKey);
+      console.log(`[SUPABASE DELETE] Deleting record '${id}' from table '${tableName}'...`);
+
+      const { error } = await supabase.from(tableName).delete().eq("id", id);
+
+      if (error) {
+        const isTableMissing = 
+          error.code === '42P01' || 
+          error.code === 'PGRST116' || 
+          (error.message && (
+            error.message.includes("Could not find the table") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("schema cache")
+          ));
+
+        if (isTableMissing) {
+          console.warn(`[SUPABASE DELETE WARNING] Table '${tableName}' does not exist on Supabase. Gracefully skipping cloud deletion.`);
+          return res.json({ 
+            success: true, 
+            message: `Table '${tableName}' does not exist yet. Gracefully skipped cloud deletion.`,
+            tableMissing: true
+          });
+        }
+
+        console.error(`[SUPABASE DELETE ERROR] Error deleting from table '${tableName}':`, error);
+        return res.status(500).json({ success: false, error: error.message, details: error });
+      }
+
+      return res.json({ success: true, message: `Successfully deleted record with ID '${id}' from table '${tableName}'` });
+    } catch (err: any) {
+      console.error("[SUPABASE DELETE FATAL ERROR]", err);
+      return res.status(500).json({ success: false, error: err.message || err });
+    }
+  });
+
   app.post("/api/supabase/sync", async (req, res) => {
     try {
-      const url = req.body.url || process.env.SUPABASE_URL;
-      const anonKey = req.body.anonKey || process.env.SUPABASE_ANON_KEY;
+      const { url: defaultUrl, anonKey: defaultAnonKey } = getSupabaseConfig();
+      const url = req.body.url || defaultUrl;
+      const anonKey = req.body.anonKey || defaultAnonKey;
       const { tableName, records } = req.body;
 
       if (!url || !anonKey) {
@@ -125,11 +554,32 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
         return res.status(400).json({ success: false, error: "Missing tableName or records array." });
       }
 
+      // Check URL format to prevent crashing on createClient
+      try {
+        new URL(url);
+      } catch (urlErr) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Supabase URL: Provided URL is malformed."
+        });
+      }
+
       if (records.length === 0) {
         return res.json({ success: true, message: "No records found to sync." });
       }
 
       const supabase = createClient(url, anonKey);
+
+      // Cache verified credentials on successful sync
+      try {
+        fs.writeFileSync(
+          path.join(process.cwd(), "supabase-config.json"),
+          JSON.stringify({ url, anonKey }, null, 2),
+          "utf-8"
+        );
+      } catch (fsErr) {
+        console.error("[SUPABASE SYNC] Error caching credentials to file:", fsErr);
+      }
 
       // Perform an upsert on the table using 'id' as the conflict resolution column.
       const { error } = await supabase
@@ -137,7 +587,25 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
         .upsert(records, { onConflict: 'id' });
 
       if (error) {
-        console.error(`Sync error for table ${tableName}:`, error);
+        const isTableMissing = 
+          error.code === '42P01' || 
+          error.code === 'PGRST116' || 
+          (error.message && (
+            error.message.includes("Could not find the table") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("schema cache")
+          ));
+
+        if (isTableMissing) {
+          console.warn(`[SUPABASE SYNC WARNING] Table '${tableName}' does not exist on Supabase yet. This is expected if you haven't run the SQL schema creation commands yet. Gracefully falling back.`);
+          return res.json({
+            success: true,
+            message: `Table '${tableName}' is not yet created in your Supabase database. Local data has been saved safely, and sync will retry once the table is created.`,
+            tableMissing: true
+          });
+        }
+
+        console.warn(`[SUPABASE SYNC EXCEPTION] Sync problem for table ${tableName}:`, error.message);
         return res.status(500).json({ 
           success: false, 
           error: error.message,
@@ -181,19 +649,16 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
     try {
       const { image, filename } = req.body;
       if (!image) {
-        return res.status(400).json({ error: "Missing image data" });
+        return res.status(400).json({ success: false, error: "Missing image data" });
       }
 
-      const url = process.env.SUPABASE_URL;
-      const anonKey = process.env.SUPABASE_ANON_KEY;
+      const { url, anonKey } = getSupabaseConfig();
 
       if (!url || !anonKey) {
-        console.warn("SUPABASE environment variables are not configured. Falling back to base64 inline storage.");
-        return res.json({
-          success: true,
-          url: image, // Fallback directly to the input base64 URL itself
-          isFallback: true,
-          message: "Supabase not configured. Saved inline as compressed asset."
+        console.error("[SUPABASE UPLOAD ERROR] Supabase environment variables are not configured.");
+        return res.status(500).json({
+          success: false,
+          error: "Supabase configuration is missing or invalid. Please configure it in the Admin Panel."
         });
       }
 
@@ -212,12 +677,12 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
       const fileBuffer = Buffer.from(base64Data, "base64");
       const sizeInMb = fileBuffer.length / (1024 * 1024);
       if (sizeInMb > 10) {
-        return res.status(400).json({ error: "Image file exceeds the 10MB size limit." });
+        return res.status(400).json({ success: false, error: "Image file exceeds the 10MB size limit." });
       }
 
       const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/jpg"];
       if (!allowedTypes.includes(mimeType)) {
-        return res.status(400).json({ error: `Unsupported image type: ${mimeType}. Please upload a JPG, PNG, WEBP, or GIF.` });
+        return res.status(400).json({ success: false, error: `Unsupported image type: ${mimeType}. Please upload a JPG, PNG, WEBP, or GIF.` });
       }
 
       const supabase = createClient(url, anonKey);
@@ -250,12 +715,9 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
       if (uploadError) {
         console.error("Supabase Storage upload error:", uploadError);
-        console.warn("Falling back to inline base64 storage due to Supabase upload error.");
-        return res.json({
-          success: true,
-          url: image,
-          isFallback: true,
-          message: `Storage upload failed (${uploadError.message}). Saved inline instead.`
+        return res.status(500).json({
+          success: false,
+          error: `Supabase Storage upload failed: ${uploadError.message}. Fallbacks have been disabled.`
         });
       }
 
@@ -271,17 +733,72 @@ app.use(express.urlencoded({ limit: "15mb", extended: true }));
       return res.json({
         success: true,
         url: publicUrlData.publicUrl,
+        bucket: bucketName,
+        path: data?.path || uniquePath,
         isFallback: false,
-        path: data?.path
+        dbRecordCreated: false,
+        message: "File successfully uploaded and stored in Supabase Storage."
       });
     } catch (error: any) {
-      console.error("General Supabase upload route error:", error);
-      // Absolute graceful fallback to inline base64 so user's work is saved anyway!
+      console.error("General Supabase upload route fatal error:", error);
+      return res.status(500).json({
+        success: false,
+        error: `Unexpected error during upload: ${error.message || error}`
+      });
+    }
+  });
+
+  // Cloudinary Secure Proxy Upload Endpoint
+  app.post("/api/cloudinary/upload", async (req, res) => {
+    try {
+      const { image, filename } = req.body;
+      if (!image) {
+        return res.status(400).json({ success: false, error: "Missing image data" });
+      }
+
+      const { cloudName, apiKey, apiSecret } = getCloudinaryConfig();
+      if (!cloudName || !apiKey || !apiSecret) {
+        console.error("[CLOUDINARY UPLOAD ERROR] Cloudinary configuration is missing.");
+        return res.status(500).json({
+          success: false,
+          error: "Cloudinary configuration is missing. Please configure it in the Admin Panel."
+        });
+      }
+
+      cloudinary.config({
+        cloud_name: cloudName,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        secure: true
+      });
+
+      let uploadStr = image;
+      if (!image.startsWith("data:")) {
+        uploadStr = `data:image/jpeg;base64,${image}`;
+      }
+
+      const cleanId = (filename || `upload-${Date.now()}`)
+        .replace(/\.[^/.]+$/, "") // remove extension
+        .replace(/[^a-zA-Z0-9_-]/g, "_");
+
+      console.log(`Uploading ${cleanId} to Cloudinary...`);
+      const uploadResult = await cloudinary.uploader.upload(uploadStr, {
+        public_id: `${Date.now()}-${cleanId}`,
+        folder: "olamide_visuals"
+      });
+
+      console.log(`Cloudinary upload succeeded. Secure URL: ${uploadResult.secure_url}`);
       return res.json({
         success: true,
-        url: req.body.image,
-        isFallback: true,
-        message: `An unexpected error occurred during storage upload: ${error.message || error}. Saved inline.`
+        url: uploadResult.secure_url,
+        publicId: uploadResult.public_id,
+        message: "File successfully uploaded and stored in Cloudinary."
+      });
+    } catch (error: any) {
+      console.error("General Cloudinary upload route fatal error:", error);
+      return res.status(500).json({
+        success: false,
+        error: `Cloudinary upload failed: ${error.message || error}`
       });
     }
   });
@@ -543,7 +1060,7 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else if (!process.env.VERCEL) {
+  } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
@@ -551,11 +1068,9 @@ async function startServer() {
     });
   }
 
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
-  }
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
 }
 
 startServer();

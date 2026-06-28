@@ -12,10 +12,10 @@ import {
   Sliders, MessageSquare, Database, RefreshCw, Star, Info, Mail, Phone, 
   MapPin, CheckCircle, AlertTriangle, Play, HelpCircle, Download, FileSpreadsheet,
   Upload, Eye, CreditCard, ToggleLeft, ToggleRight, HardDrive, Type, FileCode, Lock, Sparkles, Instagram,
-  Heart, MessageCircle
+  Heart, MessageCircle, Activity, Cloud
 } from 'lucide-react';
 import { 
-  getFromDB, saveToDB, logAdminAction as rawLogAdminAction, CrewMember, BlogPost, Transaction, 
+  getFromDB, saveToDB, saveToLocalOnly, logAdminAction as rawLogAdminAction, CrewMember, BlogPost, Transaction, 
   AdminProfile, ActivityLog, ContactMessage, WebsiteContent, compressImageBase64
 } from './db';
 import { BookingData, Service, PortfolioItem } from '../types';
@@ -75,6 +75,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [services, setServices] = useState<Service[]>([]);
   const [instagramPosts, setInstagramPosts] = useState<{ id: string; imageUrl: string; likes: string; comments: string }[]>([]);
   const [spotlightItems, setSpotlightItems] = useState<SpotlightItem[]>([]);
+  const [uploadDiagnostics, setUploadDiagnostics] = useState<{
+    success: boolean;
+    bucket: string;
+    url: string;
+    path: string;
+    dbRecordCreated: boolean;
+    timestamp: string;
+    error?: string;
+  } | null>(null);
 
   // Shadow logAdminAction for instant, real-time UI logging updates
   const logAdminAction = (action: string, category: ActivityLog['category']) => {
@@ -201,6 +210,74 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
   const [syncingTables, setSyncingTables] = useState<Record<string, boolean>>({});
   const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  // Cloudinary states
+  const [cloudinaryCloudName, setCloudinaryCloudName] = useState(() => localStorage.getItem('olamide_visuals_cloudinary_cloud_name') || '');
+  const [cloudinaryApiKey, setCloudinaryApiKey] = useState(() => localStorage.getItem('olamide_visuals_cloudinary_api_key') || '');
+  const [cloudinaryApiSecret, setCloudinaryApiSecret] = useState(() => localStorage.getItem('olamide_visuals_cloudinary_api_secret') || '');
+  const [cloudinaryConfig, setCloudinaryConfig] = useState<{ envConfigured: boolean; cloudName: string | null } | null>(null);
+  const [cloudinaryTesting, setCloudinaryTesting] = useState(false);
+  const [cloudinaryTestResult, setCloudinaryTestResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
+  const [preferredStorage, setPreferredStorage] = useState<'supabase' | 'cloudinary'>(
+    () => (localStorage.getItem('olamide_visuals_preferred_storage') as 'supabase' | 'cloudinary') || 'supabase'
+  );
+
+  // Disconnect & Diagnosis states
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnosticReport, setDiagnosticReport] = useState<any | null>(null);
+
+  const disconnectSupabase = async () => {
+    if (!window.confirm("Are you sure you want to disconnect Supabase? This will clear credentials on the client and server cache.")) {
+      return;
+    }
+    
+    try {
+      const res = await fetch("/api/supabase/disconnect", {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSupabaseUrl('');
+        setSupabaseAnonKey('');
+        setSupabaseTestResult(null);
+        setSupabaseConfig({ envConfigured: false, url: null });
+        
+        localStorage.removeItem('olamide_visuals_supabase_url');
+        localStorage.removeItem('olamide_visuals_supabase_anon_key');
+        
+        triggerToast("Supabase disconnected successfully!");
+        logAdminAction("Successfully disconnected Supabase integration", "system");
+
+        // Automatically run diagnostics to show the new state!
+        runDiagnostics();
+      } else {
+        triggerToast(`Failed to disconnect: ${data.error || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      console.error("Disconnect error:", err);
+      triggerToast(`Failed to disconnect: ${err.message || err}`);
+    }
+  };
+
+  const runDiagnostics = async () => {
+    setDiagnosing(true);
+    triggerToast("Initiating system diagnostics scan...");
+    try {
+      const res = await fetch("/api/diagnose/engine");
+      const data = await res.json();
+      if (res.ok) {
+        setDiagnosticReport(data);
+        triggerToast("Diagnostics scan completed successfully!");
+      } else {
+        triggerToast(`Diagnostics failed: ${data.error || "Unknown server error"}`);
+      }
+    } catch (err: any) {
+      console.error("Diagnostics error:", err);
+      triggerToast(`Diagnostics failed: ${err.message || err}`);
+    } finally {
+      setDiagnosing(false);
+    }
+  };
  
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -216,27 +293,56 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         setSupabaseConfig(data);
       })
       .catch(err => console.error("Failed to fetch Supabase config:", err));
+
+    fetch('/api/cloudinary/config')
+      .then(res => res.json())
+      .then(data => {
+        setCloudinaryConfig(data);
+      })
+      .catch(err => console.error("Failed to fetch Cloudinary config:", err));
   }, []);
 
   const uploadToSupabaseStorage = async (base64Image: string, filename: string): Promise<string> => {
     try {
-      const res = await fetch("/api/supabase/upload", {
+      setUploadDiagnostics(null); // Reset diagnostics on new upload
+      
+      const isCloudinary = preferredStorage === 'cloudinary';
+      const endpoint = isCloudinary ? "/api/cloudinary/upload" : "/api/supabase/upload";
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64Image, filename }),
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Upload failed");
+        throw new Error(err.error || err.message || "Upload failed");
       }
       const data = await res.json();
-      if (data.isFallback) {
-        console.warn("Uploaded as base64 fallback:", data.message);
-      }
+      
+      const diag = {
+        success: true,
+        bucket: isCloudinary ? 'cloudinary' : (data.bucket || 'portfolio'),
+        url: data.url,
+        path: isCloudinary ? (data.publicId || filename) : (data.path || filename),
+        dbRecordCreated: false, // Set to true once the admin publishes or updates the corresponding section
+        timestamp: new Date().toLocaleTimeString(),
+      };
+      setUploadDiagnostics(diag);
       return data.url;
     } catch (error: any) {
-      console.warn("Supabase upload failed, using inline base64 fallback:", error);
-      return base64Image;
+      const diagErr = {
+        success: false,
+        bucket: preferredStorage === 'cloudinary' ? 'cloudinary' : 'portfolio',
+        url: '',
+        path: '',
+        dbRecordCreated: false,
+        timestamp: new Date().toLocaleTimeString(),
+        error: error.message || String(error)
+      };
+      setUploadDiagnostics(diagErr);
+      triggerToast(`${preferredStorage === 'cloudinary' ? 'Cloudinary' : 'Supabase'} Upload Failed: ${error.message || error}`);
+      throw error; // Strictly propagate the error to block any saving of local/mock/base64 fallbacks
     }
   };
  
@@ -484,6 +590,66 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
   };
 
+  const testCloudinaryConnection = async () => {
+    setCloudinaryTesting(true);
+    setCloudinaryTestResult(null);
+    triggerToast("Testing connection to Cloudinary...");
+
+    try {
+      const payload: any = {};
+      if (cloudinaryCloudName) payload.cloudName = cloudinaryCloudName;
+      if (cloudinaryApiKey) payload.apiKey = cloudinaryApiKey;
+      if (cloudinaryApiSecret) payload.apiSecret = cloudinaryApiSecret;
+
+      const res = await fetch("/api/cloudinary/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setCloudinaryTestResult({
+          success: false,
+          message: data.error || "Failed to connect",
+          details: data.details ? JSON.stringify(data.details, null, 2) : undefined
+        });
+        triggerToast("Cloudinary Connection Failed");
+      } else {
+        setCloudinaryTestResult({
+          success: true,
+          message: data.message,
+          details: data.details
+        });
+        triggerToast("Cloudinary Connection Successful!");
+        logAdminAction("Successfully tested Cloudinary cloud connection", "system");
+
+        if (cloudinaryCloudName) {
+          localStorage.setItem('olamide_visuals_cloudinary_cloud_name', cloudinaryCloudName);
+        }
+        if (cloudinaryApiKey) {
+          localStorage.setItem('olamide_visuals_cloudinary_api_key', cloudinaryApiKey);
+        }
+        if (cloudinaryApiSecret) {
+          localStorage.setItem('olamide_visuals_cloudinary_api_secret', cloudinaryApiSecret);
+        }
+
+        // Automatically configure preferred storage to cloudinary on success
+        localStorage.setItem('olamide_visuals_preferred_storage', 'cloudinary');
+        setPreferredStorage('cloudinary');
+      }
+    } catch (err: any) {
+      console.error("Test Cloudinary connection error:", err);
+      setCloudinaryTestResult({
+        success: false,
+        message: err.message || "An unexpected error occurred."
+      });
+      triggerToast("Cloudinary Connection Failed");
+    } finally {
+      setCloudinaryTesting(false);
+    }
+  };
+
   const syncTableToSupabase = async (tableName: string, dataItems: any[]) => {
     if (dataItems.length === 0) {
       triggerToast(`No local items to sync for table "${tableName}".`);
@@ -521,14 +687,97 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         throw new Error(result.error || "Failed to synchronize");
       }
 
+      if (result.tableMissing) {
+        triggerToast(`Notice: Table "${tableName}" is not created on Supabase yet. Using local storage.`);
+        return;
+      }
+
       triggerToast(`✓ Synchronized ${dataItems.length} items to "${tableName}"!`);
       logAdminAction(`Synchronized database table ${tableName} to Supabase (${dataItems.length} records)`, "system");
     } catch (err: any) {
-      console.error(`Sync error for ${tableName}:`, err);
-      triggerToast(`Sync failed for ${tableName}: ${err.message}`);
+      console.warn(`[SUPABASE SYNC NOTIFY] ${tableName}:`, err);
+      triggerToast(`Synchronization notice for ${tableName}: ${err.message}`);
     } finally {
       setSyncingTables(prev => ({ ...prev, [tableName]: false }));
     }
+  };
+
+  const [pullingAll, setPullingAll] = useState(false);
+
+  const loadAllDataFromSupabase = async () => {
+    setPullingAll(true);
+    let successCount = 0;
+
+    const tablesToPull = [
+      { key: 'olamide_visuals_bookings', table: 'bookings', setter: setBookings },
+      { key: 'olamide_visuals_crew', table: 'crew', setter: setCrew },
+      { key: 'olamide_visuals_blog', table: 'blog', setter: setBlog },
+      { key: 'olamide_visuals_transactions', table: 'transactions', setter: setTransactions },
+      { key: 'olamide_visuals_messages', table: 'messages', setter: setMessages },
+      { key: 'olamide_visuals_logs', table: 'logs', setter: setLogs },
+      { key: 'olamide_visuals_portfolio_items', table: 'portfolio_items', setter: setPortfolioItems },
+      { key: 'olamide_visuals_media', table: 'media', setter: setMediaItems },
+      { key: 'olamide_visuals_instagram_posts', table: 'instagram', setter: setInstagramPosts },
+      { key: 'olamide_visuals_spotlight', table: 'spotlight', setter: setSpotlightItems },
+    ];
+
+    for (const t of tablesToPull) {
+      try {
+        const res = await fetch(`/api/supabase/fetch?table=${t.table}`);
+        if (res.ok) {
+          const result = await res.json();
+          if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+            saveToLocalOnly(t.key, result.data);
+            t.setter(result.data);
+            successCount++;
+          }
+        }
+      } catch (err) {
+        console.warn(`[SUPABASE INITIAL LOAD] Failed to pull from table ${t.table}:`, err);
+      }
+    }
+
+    try {
+      const res = await fetch('/api/supabase/fetch?table=content');
+      if (res.ok) {
+        const result = await res.json();
+        if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+          const mainRecord = result.data.find((item: any) => item.id === 'main') || result.data[0];
+          const cnt = getFromDB<any>('olamide_visuals_content', {});
+          const updatedContent = {
+            ...cnt,
+            about: {
+              ...cnt.about,
+              biography: mainRecord.biography || cnt?.about?.biography || '',
+              profileImage: mainRecord.profileImage || cnt?.about?.profileImage || '',
+              businessAddress: mainRecord.businessAddress || cnt?.about?.businessAddress || '',
+            },
+            branding: {
+              ...cnt.branding,
+              logoText: mainRecord.logoText || cnt?.branding?.logoText || '',
+              tagline: mainRecord.tagline || cnt?.branding?.tagline || '',
+              primaryColor: mainRecord.primaryColor || cnt?.branding?.primaryColor || '',
+              fontFamily: mainRecord.fontFamily || cnt?.branding?.fontFamily || '',
+              faviconUrl: mainRecord.faviconUrl || cnt?.branding?.faviconUrl || '',
+            },
+            hero: {
+              ...cnt.hero,
+              title: mainRecord.heroTitle || cnt?.hero?.title || '',
+              subTitle: mainRecord.heroSubTitle || cnt?.hero?.subTitle || '',
+              ctaText: mainRecord.heroCtaText || cnt?.hero?.ctaText || '',
+            }
+          };
+          saveToLocalOnly('olamide_visuals_content', updatedContent);
+          setContent(updatedContent);
+          successCount++;
+        }
+      }
+    } catch (err) {
+      console.warn(`[SUPABASE INITIAL LOAD] Failed to pull content:`, err);
+    }
+
+    setPullingAll(false);
+    return successCount;
   };
 
   // Media Library states
@@ -673,6 +922,37 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         return next;
       });
     }, 12000); // every 12 seconds
+
+    // Silent automatic connection validation on dashboard load to populate server cache
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      fetch("/api/supabase/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: storedUrl, anonKey: storedAnon }),
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          console.log("Supabase connection verified on mount. Pulling latest data from cloud tables...");
+          loadAllDataFromSupabase();
+        }
+      })
+      .catch(err => console.warn("Silent credentials synchronization failed on mount:", err));
+    }
+
+    // Silent automatic Cloudinary connection validation on dashboard load to populate server cache
+    const storedCloudName = localStorage.getItem('olamide_visuals_cloudinary_cloud_name');
+    const storedApiKey = localStorage.getItem('olamide_visuals_cloudinary_api_key');
+    const storedApiSecret = localStorage.getItem('olamide_visuals_cloudinary_api_secret');
+    if (storedCloudName && storedApiKey && storedApiSecret) {
+      fetch("/api/cloudinary/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cloudName: storedCloudName, apiKey: storedApiKey, apiSecret: storedApiSecret }),
+      }).catch(err => console.warn("Silent Cloudinary credentials synchronization failed on mount:", err));
+    }
 
     return () => {
       window.removeEventListener('storage', syncDatabaseRealtime);
@@ -823,11 +1103,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const syncPortfolio = (updated: PortfolioItem[]) => {
     setPortfolioItems(updated);
     saveToDB('olamide_visuals_portfolio_items', updated);
+    setUploadDiagnostics(prev => prev ? { ...prev, dbRecordCreated: true } : null);
   };
 
   const syncInstagramPosts = (updated: { id: string; imageUrl: string; likes: string; comments: string }[]) => {
     setInstagramPosts(updated);
     saveToDB('olamide_visuals_instagram_posts', updated);
+    setUploadDiagnostics(prev => prev ? { ...prev, dbRecordCreated: true } : null);
   };
 
   const handleIgImageUpload = (file: File) => {
@@ -850,7 +1132,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           // Upload to Supabase Storage
           const storageUrl = await uploadToSupabaseStorage(base64Url, file.name);
           setInstagramForm(prev => ({ ...prev, imageUrl: storageUrl }));
-          triggerToast("Image uploaded to Supabase Storage successfully!");
+          triggerToast(`Image uploaded to ${preferredStorage === 'cloudinary' ? 'Cloudinary' : 'Supabase Storage'} successfully!`);
         } catch (err: any) {
           console.error("Upload error:", err);
           triggerToast(`Failed to process image: ${err.message || err}`);
@@ -1703,6 +1985,19 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <span>Supabase Sync</span>
                 </span>
                 <ChevronRight className={`w-3.5 h-3.5 ${activeTab === 'supabase' ? 'opacity-100' : 'opacity-0'}`} />
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('cloudinary')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-mono tracking-wider uppercase transition-colors rounded-none cursor-pointer ${
+                  activeTab === 'cloudinary' ? 'bg-[#0F0F0F] text-gold border-l-2 border-gold' : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span className="flex items-center space-x-2.5">
+                  <Cloud className="w-4 h-4" />
+                  <span>Cloudinary Sync</span>
+                </span>
+                <ChevronRight className={`w-3.5 h-3.5 ${activeTab === 'cloudinary' ? 'opacity-100' : 'opacity-0'}`} />
               </button>
 
               <button 
@@ -4092,6 +4387,21 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       <span>{supabaseTesting ? 'VERIFYING PORTAL...' : 'TEST PORTAL CONNECTION'}</span>
                     </button>
 
+                    <button
+                      type="button"
+                      disabled={pullingAll || supabaseTesting}
+                      onClick={async () => {
+                        triggerToast("Pulling all table records from Supabase cloud database...");
+                        const loadedCount = await loadAllDataFromSupabase();
+                        triggerToast(`✓ Successfully imported ${loadedCount} active collections from Supabase!`);
+                        logAdminAction(`Manually pulled database records from Supabase (${loadedCount} tables updated)`, "system");
+                      }}
+                      className="w-full py-3 bg-gold text-black hover:bg-white font-mono text-xs tracking-widest font-bold uppercase transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <Download className={`w-4 h-4 ${pullingAll ? 'animate-spin' : ''}`} />
+                      <span>{pullingAll ? 'IMPORTING FROM CLOUD...' : 'PULL LATEST FROM CLOUD'}</span>
+                    </button>
+
                     {/* Test result display */}
                     {supabaseTestResult && (
                       <div className={`p-4 border font-mono text-[10px] leading-relaxed transition-all duration-300 ${
@@ -4240,6 +4550,162 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       </div>
                     </div>
 
+                    {/* Instagram Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: instagram</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Instagram Feed</h4>
+                        <p className="text-[9px] text-zinc-500">Instagram curation posts and counts.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{instagramPosts.length} records</span>
+                        <button
+                          disabled={syncingTables['instagram'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('instagram', instagramPosts)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['instagram'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Media Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: media</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Media Assets</h4>
+                        <p className="text-[9px] text-zinc-500">Uploaded images, filenames, sizes, and folders.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{mediaItems.length} records</span>
+                        <button
+                          disabled={syncingTables['media'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('media', mediaItems)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['media'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Transactions Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: transactions</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Transactions Ledger</h4>
+                        <p className="text-[9px] text-zinc-500">Payment receipts, Paystack invoices, reference links.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{transactions.length} records</span>
+                        <button
+                          disabled={syncingTables['transactions'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('transactions', transactions)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['transactions'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Activity Logs Card */}
+                    <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: logs</span>
+                        <h4 className="text-xs font-bold text-white uppercase font-serif">Security Logs</h4>
+                        <p className="text-[9px] text-zinc-500">Admin actions, categories, device metadata, login events.</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                        <span className="text-[10px] text-zinc-400">{logs.length} records</span>
+                        <button
+                          disabled={syncingTables['logs'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('logs', logs)}
+                          className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                        >
+                          {syncingTables['logs'] ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Storage & Database Sync Telemetry Diagnostics */}
+                    <div className="col-span-1 md:col-span-2 p-5 bg-zinc-950 border border-gold/10 rounded-none space-y-4 font-mono">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <span className="text-[10px] text-gold font-bold uppercase tracking-wider flex items-center space-x-1.5">
+                          <Activity className="w-3.5 h-3.5" />
+                          <span>Storage Upload & Database Sync Telemetry Diagnostics</span>
+                        </span>
+                        <span className="text-[8px] text-zinc-500">LIVE FEED</span>
+                      </div>
+                      
+                      {uploadDiagnostics ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[10px]">
+                          <div className="space-y-2">
+                            <div className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="text-zinc-500 uppercase">Upload Success Status:</span>
+                              <span className={`font-bold ${uploadDiagnostics.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {uploadDiagnostics.success ? 'YES ✓' : 'NO ✗'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="text-zinc-500 uppercase">Storage Bucket Used:</span>
+                              <span className="text-white font-bold">{uploadDiagnostics.bucket}</span>
+                            </div>
+                            <div className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="text-zinc-500 uppercase">Database Record Created:</span>
+                              <span className={`font-bold ${uploadDiagnostics.dbRecordCreated ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                {uploadDiagnostics.dbRecordCreated ? 'YES ✓ (PERSISTED)' : 'PENDING PUBLICATION'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="text-zinc-500 uppercase">Telemetry Timestamp:</span>
+                              <span className="text-zinc-400">{uploadDiagnostics.timestamp}</span>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-2 flex flex-col justify-between">
+                            <div className="space-y-1">
+                              <span className="text-zinc-500 uppercase block">Stored Public Image URL:</span>
+                              {uploadDiagnostics.url ? (
+                                <div className="flex items-center space-x-1">
+                                  <input 
+                                    type="text" 
+                                    readOnly 
+                                    value={uploadDiagnostics.url} 
+                                    className="w-full bg-black/60 border border-white/5 p-1 text-[9px] text-zinc-300 focus:outline-none select-all font-mono"
+                                  />
+                                  <button 
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(uploadDiagnostics.url);
+                                      triggerToast("URL Copied!");
+                                    }}
+                                    className="p-1 px-2 bg-zinc-900 border border-white/10 hover:border-gold text-zinc-300 hover:text-white font-mono text-[9px] cursor-pointer"
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-zinc-600 italic">None - Upload Failed</span>
+                              )}
+                            </div>
+                            {uploadDiagnostics.error && (
+                              <div className="p-2 bg-red-950/20 border border-red-500/20 text-red-300 text-[9px] rounded">
+                                <span className="font-bold">Error Details:</span> {uploadDiagnostics.error}
+                              </div>
+                            )}
+                            {uploadDiagnostics.success && (
+                              <div className="p-2 bg-emerald-950/20 border border-emerald-500/10 text-emerald-300 text-[9px] rounded leading-relaxed">
+                                Curated asset safely stored in Supabase. Database record created status will display 'YES' as soon as the respective form is submitted.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-6 text-center text-zinc-500 text-[10px] space-y-1">
+                          <p>No recent image uploads detected.</p>
+                          <p className="text-[9px] text-zinc-600">Upload a portfolio asset, instagram post, crew avatar, or blog banner to trigger live telemetry diagnostics.</p>
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 </div>
 
@@ -4276,7 +4742,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   date text,
   description text,
   likes integer default 0,
-  views integer default 0
+  views integer default 0,
+  aspect text,
+  location text,
+  year text
 );`, 'portfolio_items')}
                       className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
                     >
@@ -4408,7 +4877,507 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     </button>
                   </div>
 
+                  {/* Schema 7: Instagram */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">7. INSTAGRAM FEED SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates 'instagram' table for social feed curation assets.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table instagram (
+  id text primary key,
+  "imageUrl" text not null,
+  likes text,
+  comments text
+);`, 'instagram')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'instagram' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 8: Content Website Metadata */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">8. CONTENT WEBSITE METADATA SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'content' table for global settings and biographies.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table content (
+  id text primary key,
+  biography text,
+  "profileImage" text,
+  "businessAddress" text,
+  "logoText" text,
+  tagline text,
+  "primaryColor" text,
+  "fontFamily" text,
+  "faviconUrl" text,
+  "heroTitle" text,
+  "heroSubTitle" text,
+  "heroCtaText" text
+);`, 'content')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'content' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 9: Media Library SQL */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">9. MEDIA LIBRARY SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'media' table for local & cloud-uploaded media assets.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table media (
+  id text primary key,
+  url text not null,
+  name text,
+  size text,
+  folder text
+);
+
+-- Row Level Security (RLS) setup for 'media'
+alter table media enable row level security;
+create policy "Allow public read access" on media for select using (true);
+create policy "Allow all access" on media for all using (true) with check (true);`, 'media')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'media' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 10: Transactions SQL */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">10. TRANSACTIONS LEDGER SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'transactions' table with booking & reference mapping.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table transactions (
+  id text primary key,
+  "bookingId" text,
+  "clientName" text,
+  amount numeric,
+  method text,
+  status text,
+  date text,
+  "invoiceNo" text
+);
+
+-- Row Level Security (RLS) setup for 'transactions'
+alter table transactions enable row level security;
+create policy "Allow public read access" on transactions for select using (true);
+create policy "Allow all access" on transactions for all using (true) with check (true);`, 'transactions')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'transactions' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
+                  {/* Schema 11: Security Logs SQL */}
+                  <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
+                    <div className="space-y-1">
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">11. AUDIT SECURITY LOGS SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'logs' table to persist administration activity trails.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(`create table logs (
+  id text primary key,
+  timestamp text,
+  action text not null,
+  category text,
+  "user" text,
+  ip text,
+  device text
+);
+
+-- Row Level Security (RLS) setup for 'logs'
+alter table logs enable row level security;
+create policy "Allow public read access" on logs for select using (true);
+create policy "Allow all access" on logs for all using (true) with check (true);`, 'logs')}
+                      className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
+                    >
+                      {copiedText === 'logs' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                    </button>
+                  </div>
+
                 </div>
+
+                {/* System Diagnostics & Connection Control Hub */}
+                <div className="bg-[#080808] border border-white/5 p-6 space-y-6 font-mono text-zinc-300">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/5 pb-4 gap-4">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-white uppercase flex items-center space-x-1.5">
+                        <Activity className="w-4 h-4 text-gold animate-pulse" />
+                        <span>System Integration Diagnostics & Control</span>
+                      </h3>
+                      <p className="text-[10px] text-zinc-500">AUDIT CLOUD INTEGRATION STACKS AND MANAGE LIFECYCLE CONNECTIONS</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2.5">
+                      <button
+                        type="button"
+                        disabled={diagnosing}
+                        onClick={runDiagnostics}
+                        className="px-4 py-2 bg-transparent border border-zinc-700 text-zinc-300 hover:border-gold hover:text-gold text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center space-x-1.5"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${diagnosing ? 'animate-spin' : ''}`} />
+                        <span>{diagnosing ? 'RUNNING SCAN...' : 'RUN INTEGRATION DIAGNOSIS'}</span>
+                      </button>
+                      
+                      <button
+                        type="button"
+                        onClick={disconnectSupabase}
+                        className="px-4 py-2 bg-red-950/20 border border-red-500/20 text-red-400 hover:bg-red-500 hover:text-black text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer flex items-center space-x-1.5"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>DISCONNECT SUPABASE</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Diagnosis report card */}
+                  {diagnosticReport ? (
+                    <div className="space-y-5 animate-fade-in">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Supabase Diagnosis Status */}
+                        <div className="p-4 bg-black border border-white/5 space-y-2">
+                          <span className="text-[9px] text-zinc-500 uppercase tracking-widest block font-sans">SUPABASE CLOUD POSTGRES</span>
+                          <div className="flex items-center space-x-2">
+                            <div className={`w-2 h-2 rounded-full ${
+                              diagnosticReport.supabase.status === 'connected' ? 'bg-emerald-500 animate-pulse' :
+                              diagnosticReport.supabase.status === 'explicitly_disconnected' ? 'bg-zinc-600' : 'bg-red-500'
+                            }`} />
+                            <span className="text-xs font-bold uppercase text-white">
+                              {diagnosticReport.supabase.status === 'connected' ? 'Connected & Verified' :
+                               diagnosticReport.supabase.status === 'explicitly_disconnected' ? 'Explicitly Disconnected' : 
+                               diagnosticReport.supabase.status === 'unconfigured' ? 'Unconfigured / Empty' : 'Connection Failed'}
+                            </span>
+                          </div>
+                          {diagnosticReport.supabase.url && (
+                            <p className="text-[9px] text-zinc-400 truncate mt-1">Endpoint: {diagnosticReport.supabase.url}</p>
+                          )}
+                          {diagnosticReport.supabase.error && (
+                            <p className="text-[9px] text-red-400 mt-1 leading-normal">{diagnosticReport.supabase.error}</p>
+                          )}
+                          {diagnosticReport.supabase.connectionTest && (
+                            <p className="text-[9px] text-emerald-400 mt-1 leading-normal">{diagnosticReport.supabase.connectionTest}</p>
+                          )}
+                        </div>
+
+                        {/* Cloudinary Status */}
+                        <div className="p-4 bg-black border border-white/5 space-y-2">
+                          <span className="text-[9px] text-zinc-500 uppercase tracking-widest block font-sans">CLOUDINARY IMAGE CDN</span>
+                          <div className="flex items-center space-x-2">
+                            <div className={`w-2 h-2 rounded-full ${
+                              diagnosticReport.cloudinary.status === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'
+                            }`} />
+                            <span className="text-xs font-bold uppercase text-white">
+                              {diagnosticReport.cloudinary.status === 'connected' ? 'Connected & Verified' : 
+                               diagnosticReport.cloudinary.status === 'unconfigured' ? 'Not Configured' : 'Connection Failed'}
+                            </span>
+                          </div>
+                          {diagnosticReport.cloudinary.cloudName && (
+                            <p className="text-[9px] text-zinc-400 truncate mt-1">Cloud Name: {diagnosticReport.cloudinary.cloudName}</p>
+                          )}
+                          {diagnosticReport.cloudinary.error && (
+                            <p className="text-[9px] text-red-400 mt-1 leading-normal">{diagnosticReport.cloudinary.error}</p>
+                          )}
+                          {diagnosticReport.cloudinary.connectionTest && (
+                            <p className="text-[9px] text-emerald-400 mt-1 leading-normal">CDN test succeeded</p>
+                          )}
+                        </div>
+
+                        {/* Platform Default Firestore Status */}
+                        <div className="p-4 bg-black border border-white/5 space-y-2">
+                          <span className="text-[9px] text-zinc-500 uppercase tracking-widest block font-sans">FIRESTORE CORE DATABASE</span>
+                          <div className="flex items-center space-x-2">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="text-xs font-bold uppercase text-white">ACTIVE & OPERATIONAL</span>
+                          </div>
+                          <p className="text-[9px] text-zinc-400 mt-1 leading-normal">Platform-native reactive cache storage is serving as the primary local backup engine.</p>
+                        </div>
+                      </div>
+
+                      {/* Environment variables grid */}
+                      <div className="p-4 bg-zinc-950 border border-white/5 space-y-3">
+                        <span className="text-[9px] text-zinc-400 uppercase tracking-widest block font-bold text-gold font-sans">CONTAINER PORTAL SECRETS VERIFICATION</span>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4 text-[10px]">
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1">
+                            <span className="text-zinc-500">GEMINI_API_KEY</span>
+                            <span className={diagnosticReport.environment.geminiApiKeyConfigured ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                              {diagnosticReport.environment.geminiApiKeyConfigured ? '✔ CONFIGURED' : '✘ MISSING'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1">
+                            <span className="text-zinc-500">SUPABASE_URL</span>
+                            <span className={diagnosticReport.environment.supabaseEnvUrlConfigured ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                              {diagnosticReport.environment.supabaseEnvUrlConfigured ? '✔ CONFIGURED' : '✘ BYPASSED'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1">
+                            <span className="text-zinc-500">SUPABASE_ANON_KEY</span>
+                            <span className={diagnosticReport.environment.supabaseEnvKeyConfigured ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                              {diagnosticReport.environment.supabaseEnvKeyConfigured ? '✔ CONFIGURED' : '✘ BYPASSED'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1 sm:border-b-0 sm:pb-0">
+                            <span className="text-zinc-500">CLOUDINARY_CLOUD</span>
+                            <span className={diagnosticReport.environment.cloudinaryEnvCloudConfigured ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                              {diagnosticReport.environment.cloudinaryEnvCloudConfigured ? '✔ CONFIGURED' : '✘ BYPASSED'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1 sm:border-b-0 sm:pb-0">
+                            <span className="text-zinc-500">CLOUDINARY_API_KEY</span>
+                            <span className={diagnosticReport.environment.cloudinaryEnvKeyConfigured ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                              {diagnosticReport.environment.cloudinaryEnvKeyConfigured ? '✔ CONFIGURED' : '✘ BYPASSED'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between sm:border-b-0 sm:pb-0 font-sans">
+                            <span className="text-zinc-500">CLOUDINARY_SECRET</span>
+                            <span className={diagnosticReport.environment.cloudinaryEnvSecretConfigured ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                              {diagnosticReport.environment.cloudinaryEnvSecretConfigured ? '✔ CONFIGURED' : '✘ BYPASSED'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Prescriptive actionable suggestions */}
+                      <div className="p-4 bg-zinc-950/40 border border-white/5 space-y-2">
+                        <div className="flex items-center space-x-1.5 text-gold font-bold uppercase tracking-wider text-[11px] font-sans">
+                          <Info className="w-3.5 h-3.5" />
+                          <span>Prescriptive Corrective Actions</span>
+                        </div>
+                        <ul className="list-disc pl-4 space-y-1.5 text-[10px] text-zinc-400 leading-normal">
+                          {diagnosticReport.supabase.status === 'explicitly_disconnected' && (
+                            <li className="text-zinc-300 font-medium">Supabase is currently <span className="text-gold font-bold">disconnected</span>. Local uploads will fall back to standard local persistence, and no synchronization will take place. If you wish to reconnect, input credentials in the configuration panel above and click "Test Portal Connection".</li>
+                          )}
+                          {diagnosticReport.supabase.status === 'failed' && (
+                            <li className="text-red-400 font-medium">Supabase connection test failed. Ensure your database is active on Supabase, your Row Level Security (RLS) is disabled, or you have configured acceptable policies, and verify that your URL format matches 'https://[id].supabase.co'.</li>
+                          )}
+                          {diagnosticReport.supabase.status === 'connected' && (
+                            <li className="text-emerald-400">All connections to your PostgreSQL server are green and optimized! Your portfolio content, booking items, and spotlight carousels are ready to synchronize securely.</li>
+                          )}
+                          {!diagnosticReport.environment.geminiApiKeyConfigured && (
+                            <li>The <span className="text-gold">GEMINI_API_KEY</span> is missing. Automated image category suggestion and poetic title generating will be bypassed. Define the secret in the environment settings to unlock.</li>
+                          )}
+                          {diagnosticReport.cloudinary.status === 'unconfigured' && (
+                            <li>No Cloudinary storage configuration found. Media uploads default to Supabase storage. Connect a Cloudinary portal in the "Cloudinary Sync" tab to enable advanced media CDN optimizations.</li>
+                          )}
+                          {preferredStorage === 'cloudinary' && diagnosticReport.cloudinary.status !== 'connected' && (
+                            <li className="text-red-400 font-bold">Your active storage provider is set to Cloudinary, but Cloudinary CDN credentials are unconfigured or failing. Please switch the provider back to Supabase or connect Cloudinary now.</li>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 border border-dashed border-white/5 rounded bg-black/20 flex flex-col items-center justify-center space-y-2">
+                      <span className="text-[10px] text-zinc-500 uppercase">No active diagnosis report</span>
+                      <p className="text-[9px] text-zinc-600">Click the "Run Integration Diagnosis" button to audit your active cloud connection pipelines.</p>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* TAB: CLOUDINARY CLOUD STORAGE INTEGRATION */}
+          {activeTab === 'cloudinary' && (
+            <div className="space-y-6 animate-fade-in text-zinc-100">
+              <div>
+                <h2 className="text-2xl font-serif text-white uppercase tracking-wider">Cloudinary Integration Curation</h2>
+                <p className="text-xs text-zinc-500 font-mono mt-1">ESTABLISH SECURE CLOUDINARY CONNECTIONS FOR ADVANCED HIGH-SPEED IMAGE DELIVERY AND TRANSFORMATION</p>
+              </div>
+
+              {/* Status Header Banner */}
+              <div className="p-4 bg-zinc-950 border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono">
+                <div className="space-y-1">
+                  <span className="text-[10px] text-zinc-500 uppercase tracking-widest block">CONNECTION ENGINE STATUS</span>
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-2.5 h-2.5 rounded-full ${cloudinaryConfig?.envConfigured || cloudinaryTestResult?.success ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="text-xs font-bold uppercase text-white">
+                      {cloudinaryTestResult?.success ? 'ONLINE & READY' : cloudinaryConfig?.envConfigured ? 'CREDENTIALS PRE-CONFIGURED' : 'DISCONNECTED'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                  {cloudinaryConfig?.envConfigured && (
+                    <span className="text-[9px] uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                      Using Env Variables
+                    </span>
+                  )}
+                  {(cloudinaryConfig?.cloudName || cloudinaryCloudName) && (
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      CLOUD NAME: {cloudinaryConfig?.cloudName || cloudinaryCloudName}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Active Storage Selector Banner */}
+              <div className="p-4 bg-black border border-white/5 space-y-3 font-mono">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-zinc-400 uppercase tracking-widest block">Active Storage Engine Provider</span>
+                    <p className="text-xs text-zinc-500">Determine which system handles user-uploaded images and media throughout the platform.</p>
+                  </div>
+                  <div className="flex bg-zinc-950 p-1 border border-white/5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        localStorage.setItem('olamide_visuals_preferred_storage', 'supabase');
+                        setPreferredStorage('supabase');
+                        triggerToast("Storage engine updated to Supabase Storage");
+                      }}
+                      className={`px-3 py-1.5 text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer ${
+                        preferredStorage === 'supabase'
+                          ? 'bg-gold text-black'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      Supabase Storage
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        localStorage.setItem('olamide_visuals_preferred_storage', 'cloudinary');
+                        setPreferredStorage('cloudinary');
+                        triggerToast("Storage engine updated to Cloudinary");
+                      }}
+                      className={`px-3 py-1.5 text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer ${
+                        preferredStorage === 'cloudinary'
+                          ? 'bg-gold text-black'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      Cloudinary
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* Connection Form Section */}
+                <div className="lg:col-span-6 bg-[#080808] border border-white/5 p-6 space-y-6 self-start">
+                  <div className="space-y-1 border-b border-white/5 pb-4">
+                    <h3 className="text-sm font-bold text-white uppercase font-mono flex items-center space-x-1.5">
+                      <Settings className="w-4 h-4 text-gold" />
+                      <span>Cloudinary Credentials</span>
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">SPECIFY CLOUD PORTAL PARAMETERS FOR SECURE ENCRYPTED UPLOADS</p>
+                  </div>
+
+                  <div className="space-y-4 font-mono text-xs">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">Cloud Name</label>
+                      <input 
+                        type="text"
+                        placeholder="your-cloud-name"
+                        value={cloudinaryCloudName}
+                        onChange={(e) => setCloudinaryCloudName(e.target.value)}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">API Key</label>
+                      <input 
+                        type="text"
+                        placeholder="123456789012345"
+                        value={cloudinaryApiKey}
+                        onChange={(e) => setCloudinaryApiKey(e.target.value)}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-widest block">API Secret</label>
+                      <input 
+                        type="password"
+                        placeholder="••••••••••••••••••••••••••••"
+                        value={cloudinaryApiSecret}
+                        onChange={(e) => setCloudinaryApiSecret(e.target.value)}
+                        className="w-full bg-black border border-white/5 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={cloudinaryTesting}
+                      onClick={testCloudinaryConnection}
+                      className="w-full py-3 bg-transparent border border-gold text-gold hover:bg-gold hover:text-black font-mono text-xs tracking-widest font-bold uppercase transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${cloudinaryTesting ? 'animate-spin' : ''}`} />
+                      <span>{cloudinaryTesting ? 'VERIFYING PORTAL...' : 'TEST CLOUDINARY PORTAL'}</span>
+                    </button>
+
+                    {/* Test result display */}
+                    {cloudinaryTestResult && (
+                      <div className={`p-4 border font-mono text-[10px] leading-relaxed transition-all duration-300 ${
+                        cloudinaryTestResult.success 
+                          ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-300' 
+                          : 'bg-red-950/20 border-red-500/20 text-red-300'
+                      }`}>
+                        <div className="flex items-center space-x-1.5 font-bold uppercase tracking-wider text-[11px] mb-1">
+                          <Info className="w-3.5 h-3.5 shrink-0" />
+                          <span>{cloudinaryTestResult.success ? 'Success Report' : 'Diagnostic Error'}</span>
+                        </div>
+                        <p>{cloudinaryTestResult.message}</p>
+                        {cloudinaryTestResult.details && (
+                          <pre className="mt-2 p-2 bg-black/40 text-[9px] text-zinc-400 border border-white/5 overflow-x-auto">
+                            {cloudinaryTestResult.details}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Cloudinary Info and Instructions Section */}
+                <div className="lg:col-span-6 bg-[#080808] border border-white/5 p-6 space-y-6">
+                  <div className="space-y-1 border-b border-white/5 pb-4">
+                    <h3 className="text-sm font-bold text-white uppercase font-mono flex items-center space-x-1.5">
+                      <Info className="w-4 h-4 text-gold" />
+                      <span>Integration & CDN Setup Instructions</span>
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">LEARN HOW SECURE SIGNED IMAGE STREAMING POWERS YOUR MEDIA GALLERY</p>
+                  </div>
+
+                  <div className="space-y-4 font-mono text-xs leading-relaxed text-zinc-300">
+                    <div className="p-4 bg-zinc-950/50 border border-white/5 space-y-2">
+                      <h4 className="text-white text-xs font-bold uppercase text-gold">Secure Upload Handshake</h4>
+                      <p className="text-[10px]">
+                        The platform operates a secure, server-side Cloudinary proxy on the backend container.
+                        Your API Secret is kept completely hidden from the browser, preventing any API key leakage or misuse.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-zinc-950/50 border border-white/5 space-y-2">
+                      <h4 className="text-white text-xs font-bold uppercase text-gold">Automatic Image Optimizations</h4>
+                      <p className="text-[10px]">
+                        Once connected, images uploaded to portfolio showcases, social posts, journal headers, and crew profiles
+                        automatically stream to Cloudinary, applying default image optimizations and transformations instantly.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-zinc-950/50 border border-white/5 space-y-2">
+                      <h4 className="text-white text-xs font-bold uppercase text-gold">Unified Telemetry Tracking</h4>
+                      <p className="text-[10px]">
+                        The active storage provider is automatically tracked by the diagnostic log underneath.
+                        You can view the specific CDN target of any newly uploaded image at any time.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
               </div>
             </div>
           )}
@@ -4685,7 +5654,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                           triggerToast("Processing and uploading image to Supabase...");
+                           triggerToast(`Processing and uploading image to ${preferredStorage === 'cloudinary' ? 'Cloudinary' : 'Supabase'}...`);
                            const reader = new FileReader();
                            reader.onload = async (event) => {
                              const rawBase64 = event.target?.result as string;
@@ -4694,7 +5663,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                                  const base64 = await compressImageBase64(rawBase64, 1200, 1200, 0.75);
                                  const storageUrl = await uploadToSupabaseStorage(base64, file.name);
                                  setPortfolioForm(prev => ({ ...prev, imageUrl: storageUrl }));
-                                 triggerToast("Image uploaded to Supabase Storage successfully!");
+                                 triggerToast(`Image uploaded to ${preferredStorage === 'cloudinary' ? 'Cloudinary' : 'Supabase Storage'} successfully!`);
                                  // Automatically scan whenever a file is uploaded!
                                  analyzePortfolioImage(storageUrl);
                                } catch (uploadErr: any) {
@@ -4992,7 +5961,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
                         const file = e.target.files[0];
-                        triggerToast("Uploading image to Supabase Storage...");
+                        triggerToast(`Uploading image to ${preferredStorage === 'cloudinary' ? 'Cloudinary' : 'Supabase Storage'}...`);
                         const reader = new FileReader();
                         reader.onload = async (event) => {
                           const rawBase64 = event.target?.result as string;

@@ -9,22 +9,46 @@ import { Instagram, Heart, MessageCircle, Image as ImageIcon } from 'lucide-reac
 import { INSTAGRAM_POSTS } from '../data';
 
 export default function InstagramFeed() {
-  const [posts, setPosts] = useState<{ id: string; imageUrl: string; likes: string; comments: string }[]>(() => {
-    const stored = localStorage.getItem('olamide_visuals_instagram_posts');
-    return stored ? JSON.parse(stored) : INSTAGRAM_POSTS;
-  });
+  const [posts, setPosts] = useState<{ id: string; imageUrl: string; likes: string; comments: string }[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const syncFeed = () => {
-      const stored = localStorage.getItem('olamide_visuals_instagram_posts');
-      setPosts(stored ? JSON.parse(stored) : INSTAGRAM_POSTS);
+    let active = true;
+    const fetchFeed = async () => {
+      try {
+        const res = await fetch('/api/supabase/fetch?table=instagram');
+        if (!res.ok) {
+          throw new Error(`Failed to fetch Instagram feed: ${res.statusText}`);
+        }
+        const result = await res.json();
+        if (result.success && active) {
+          const items = (result.data || []).map((item: any) => ({
+            id: item.id,
+            imageUrl: item.imageUrl || item.url,
+            likes: String(item.likes || '0'),
+            comments: String(item.comments || '0')
+          }));
+          setPosts(items);
+        }
+      } catch (err) {
+        console.error("Failed to load Instagram feed from Supabase:", err);
+        if (active) {
+          setPosts([]); // Enforce clean empty list, absolutely no fallback!
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
     };
 
-    window.addEventListener('storage', syncFeed);
-    const interval = setInterval(syncFeed, 2000);
+    fetchFeed();
+
+    // Regular polling for real-time synchronization across devices and browsers
+    const interval = setInterval(fetchFeed, 5000);
 
     return () => {
-      window.removeEventListener('storage', syncFeed);
+      active = false;
       clearInterval(interval);
     };
   }, []);

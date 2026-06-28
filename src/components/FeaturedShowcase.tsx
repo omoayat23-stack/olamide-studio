@@ -21,25 +21,48 @@ interface FeaturedStory {
 export default function FeaturedShowcase() {
   const [activeStory, setActiveStory] = useState(0);
   const [stories, setStories] = useState<FeaturedStory[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadSpotlights = () => {
+    let active = true;
+    const fetchSpotlights = async () => {
       try {
-        const stored = localStorage.getItem('olamide_visuals_spotlight');
-        setStories(stored ? JSON.parse(stored) : []);
+        const res = await fetch('/api/supabase/fetch?table=spotlight');
+        if (!res.ok) {
+          throw new Error(`Failed to fetch spotlight from Supabase: ${res.statusText}`);
+        }
+        const result = await res.json();
+        if (result.success && active) {
+          const items = (result.data || []).map((item: any) => ({
+            id: item.id,
+            title: item.title,
+            category: item.category || 'Spotlight',
+            tagline: item.tagline || '',
+            description: item.description || '',
+            imageUrl: item.imageUrl || item.url,
+            technicalSpecs: item.technicalSpecs || ''
+          }));
+          setStories(items);
+        }
       } catch (err) {
-        console.error("Failed to load spotlights:", err);
-        setStories([]);
+        console.error("Failed to load spotlights from Supabase:", err);
+        if (active) {
+          setStories([]); // Enforce clean empty list on failure, absolutely no fallback!
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
     };
-    loadSpotlights();
-    window.addEventListener('storage', loadSpotlights);
     
-    // Set up regular synchronization check
-    const interval = setInterval(loadSpotlights, 2000);
+    fetchSpotlights();
+    
+    // Regular polling for real-time synchronization across devices and browsers
+    const interval = setInterval(fetchSpotlights, 5000);
 
     return () => {
-      window.removeEventListener('storage', loadSpotlights);
+      active = false;
       clearInterval(interval);
     };
   }, []);
