@@ -28,17 +28,28 @@ export default function About() {
             biography: mainRecord.biography || '',
             profileImage: mainRecord.profileImage || ''
           });
+          setError(null);
         } else {
           // Empty state: strictly disable default fallback
           setAboutData({
             biography: '',
             profileImage: ''
           });
+          setError(null);
         }
       })
       .catch((err) => {
         console.error("About page fetch error:", err);
-        setError(err.message || String(err));
+        setAboutData((prev) => {
+          if (prev && prev.biography) {
+            // Keep existing data and don't overwrite with a blocking error
+            return prev;
+          } else {
+            // Only set blocking error if we don't have biography data yet
+            setError(err.message || String(err));
+            return prev;
+          }
+        });
       })
       .finally(() => {
         setLoading(false);

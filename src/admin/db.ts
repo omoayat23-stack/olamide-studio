@@ -526,7 +526,7 @@ export const saveToDB = <T>(key: string, data: T): void => {
       'olamide_visuals_crew': 'crew',
       'olamide_visuals_blog': 'blog',
       'olamide_visuals_messages': 'messages',
-      'olamide_visuals_portfolio_items': 'portfolio_items',
+      'olamide_visuals_portfolio_items': 'portfolio',
       'olamide_visuals_instagram_posts': 'instagram',
       'olamide_visuals_spotlight': 'spotlight',
       'olamide_visuals_media': 'media',

@@ -42,12 +42,29 @@ export default function FeaturedShowcase() {
             imageUrl: item.imageUrl || item.url,
             technicalSpecs: item.technicalSpecs || ''
           }));
-          setStories(items);
+          // Prevent redundant state updates if data remains unchanged to preserve auto-transition timers
+          setStories((prevStories) => {
+            if (prevStories.length !== items.length) return items;
+            const isDifferent = items.some((story: any, index: number) => {
+              const prev = prevStories[index];
+              return (
+                !prev ||
+                prev.id !== story.id ||
+                prev.title !== story.title ||
+                prev.category !== story.category ||
+                prev.tagline !== story.tagline ||
+                prev.description !== story.description ||
+                prev.imageUrl !== story.imageUrl ||
+                prev.technicalSpecs !== story.technicalSpecs
+              );
+            });
+            return isDifferent ? items : prevStories;
+          });
         }
       } catch (err) {
         console.error("Failed to load spotlights from Supabase:", err);
         if (active) {
-          setStories([]); // Enforce clean empty list on failure, absolutely no fallback!
+          setStories((prev) => (prev.length > 0 ? prev : []));
         }
       } finally {
         if (active) {

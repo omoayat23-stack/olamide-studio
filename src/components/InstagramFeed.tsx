@@ -33,7 +33,7 @@ export default function InstagramFeed() {
       } catch (err) {
         console.error("Failed to load Instagram feed from Supabase:", err);
         if (active) {
-          setPosts([]); // Enforce clean empty list, absolutely no fallback!
+          setPosts((prev) => (prev.length > 0 ? prev : []));
         }
       } finally {
         if (active) {

@@ -5,12 +5,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, Maximize2, MapPin, Calendar, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, MapPin, Calendar, X, Play, Pause } from 'lucide-react';
 import { PortfolioItem } from '../types';
 
 export default function Portfolio() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
+  const [isAutoplay, setIsAutoplay] = useState(true);
 
   const categories = ['All', 'Portraits', 'Weddings', 'Events', 'Fashion', 'Lifestyle', 'Commercial', 'Graduation', 'Behind The Scenes'];
 
@@ -22,7 +23,7 @@ export default function Portfolio() {
     let active = true;
     const fetchPortfolio = async () => {
       try {
-        const res = await fetch('/api/supabase/fetch?table=portfolio_items');
+        const res = await fetch('/api/supabase/fetch?table=portfolio');
         if (!res.ok) {
           throw new Error(`Failed to fetch from Supabase: ${res.statusText}`);
         }
@@ -40,7 +41,26 @@ export default function Portfolio() {
             year: item.year || '2026',
             tags: item.tags || []
           }));
-          setPortfolioList(items);
+          
+          // Prevent redundant state updates if data remains unchanged to preserve lightbox transitions and grid stability
+          setPortfolioList((prevList) => {
+            if (prevList.length !== items.length) return items;
+            const isDifferent = items.some((item: any, index: number) => {
+              const prev = prevList[index];
+              return (
+                !prev ||
+                prev.id !== item.id ||
+                prev.title !== item.title ||
+                prev.category !== item.category ||
+                prev.imageUrl !== item.imageUrl ||
+                prev.description !== item.description ||
+                prev.aspect !== item.aspect ||
+                prev.location !== item.location ||
+                prev.year !== item.year
+              );
+            });
+            return isDifferent ? items : prevList;
+          });
           setError(null);
         } else if (active) {
           throw new Error(result.error || 'Failed to fetch');
@@ -48,8 +68,16 @@ export default function Portfolio() {
       } catch (err: any) {
         console.error("Error loading portfolio from Supabase:", err);
         if (active) {
-          setError(err.message || 'Error loading portfolio.');
-          setPortfolioList([]); // Enforce clean empty list on failure, absolutely no fallback!
+          setPortfolioList((prev) => {
+            if (prev.length > 0) {
+              // We already have cached data. Keep it and don't overwrite with a blocking error
+              return prev;
+            } else {
+              // No data yet, safe to show the error
+              setError(err.message || 'Error loading portfolio.');
+              return [];
+            }
+          });
         }
       } finally {
         if (active) {
@@ -73,6 +101,17 @@ export default function Portfolio() {
   const filteredItems = activeCategory === 'All'
     ? portfolioList
     : portfolioList.filter((item) => item.category.toLowerCase() === activeCategory.toLowerCase());
+
+  // Auto-transition logic for fullscreen lightbox carousel
+  useEffect(() => {
+    if (selectedItemIndex === null || filteredItems.length <= 1 || !isAutoplay) return;
+
+    const interval = setInterval(() => {
+      setSelectedItemIndex((prev) => (prev !== null && prev < filteredItems.length - 1 ? prev + 1 : 0));
+    }, 6000); // cycle every 6s
+
+    return () => clearInterval(interval);
+  }, [selectedItemIndex, filteredItems.length, isAutoplay]);
 
   const handlePrev = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -237,13 +276,28 @@ export default function Portfolio() {
                     {selectedItemIndex + 1} / {filteredItems.length}
                   </span>
                 </div>
-                <button
-                  onClick={() => setSelectedItemIndex(null)}
-                  className="flex items-center space-x-2 text-zinc-400 hover:text-gold transition-colors border border-white/5 hover:border-gold/20 px-4 py-2 text-xs font-mono tracking-widest uppercase cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                  <span className="hidden sm:inline">Close</span>
-                </button>
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={() => setIsAutoplay(prev => !prev)}
+                    className={`flex items-center space-x-2 transition-colors border px-4 py-2 text-xs font-mono tracking-widest uppercase cursor-pointer ${
+                      isAutoplay 
+                        ? 'border-gold/20 text-gold bg-gold/5 hover:bg-gold/10' 
+                        : 'border-white/5 text-zinc-400 hover:text-white hover:border-gold/20'
+                    }`}
+                    title={isAutoplay ? "Pause slideshow cycling" : "Start slideshow cycling"}
+                  >
+                    {isAutoplay ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">{isAutoplay ? 'Pause Slideshow' : 'Play Slideshow'}</span>
+                    <span className="inline sm:hidden">{isAutoplay ? 'Pause' : 'Play'}</span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedItemIndex(null)}
+                    className="flex items-center space-x-2 text-zinc-400 hover:text-gold transition-colors border border-white/5 hover:border-gold/20 px-4 py-2 text-xs font-mono tracking-widest uppercase cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                    <span className="hidden sm:inline">Close</span>
+                  </button>
+                </div>
               </div>
 
               {/* Centered Image Showcase */}

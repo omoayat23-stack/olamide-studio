@@ -207,7 +207,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [supabaseAnonKey, setSupabaseAnonKey] = useState(() => localStorage.getItem('olamide_visuals_supabase_anon_key') || '');
   const [supabaseConfig, setSupabaseConfig] = useState<{ envConfigured: boolean; url: string | null } | null>(null);
   const [supabaseTesting, setSupabaseTesting] = useState(false);
-  const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
+  const [supabaseTestResult, setSupabaseTestResult] = useState<{
+    success: boolean;
+    message: string;
+    details?: string;
+    tablesDiagnostics?: Record<string, { exists: boolean; accessible: boolean; error: string | null; code: string | null }>;
+  } | null>(null);
   const [syncingTables, setSyncingTables] = useState<Record<string, boolean>>({});
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -346,6 +351,69 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }
   };
  
+  const compressAndResizeImage = async (imageSrc: string, maxDimension = 800): Promise<string> => {
+    return new Promise(async (resolve) => {
+      try {
+        let blob: Blob;
+        if (imageSrc.startsWith('data:')) {
+          const res = await fetch(imageSrc);
+          blob = await res.blob();
+        } else {
+          const res = await fetch(imageSrc);
+          blob = await res.blob();
+        }
+        
+        const blobUrl = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          try {
+            let width = img.width;
+            let height = img.height;
+            
+            if (width > maxDimension || height > maxDimension) {
+              if (width > height) {
+                height = Math.round((height * maxDimension) / width);
+                width = maxDimension;
+              } else {
+                width = Math.round((width * maxDimension) / height);
+                height = maxDimension;
+              }
+            }
+            
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              URL.revokeObjectURL(blobUrl);
+              resolve(imageSrc);
+              return;
+            }
+            
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressed = canvas.toDataURL("image/jpeg", 0.7);
+            URL.revokeObjectURL(blobUrl);
+            resolve(compressed);
+          } catch (e) {
+            console.warn("Compression drawing/export failed, falling back to original", e);
+            URL.revokeObjectURL(blobUrl);
+            resolve(imageSrc);
+          }
+        };
+        img.onerror = (e) => {
+          console.warn("Failed to load object URL into image, falling back to original", e);
+          URL.revokeObjectURL(blobUrl);
+          resolve(imageSrc);
+        };
+        img.src = blobUrl;
+      } catch (err) {
+        console.warn("Image retrieval for compression failed, falling back to original", err);
+        resolve(imageSrc);
+      }
+    });
+  };
+
   const analyzePortfolioImage = async (imageSrc: string) => {
     if (!imageSrc) return;
     setAiAnalyzing(true);
@@ -353,27 +421,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     triggerToast("AI is scanning and analyzing the image...");
  
     try {
-      let base64Image = imageSrc;
- 
-      if (!imageSrc.startsWith('data:')) {
-        try {
-          const response = await fetch(imageSrc);
-          const blob = await response.blob();
-          base64Image = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-        } catch (e) {
-          console.warn("Could not convert image URL to base64 on client, passing URL directly", e);
-        }
-      }
+      // Optimize image client-side to dramatically speed up request and analysis times
+      const optimizedBase64 = await compressAndResizeImage(imageSrc);
  
       const res = await fetch("/api/gemini/analyze-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64Image }),
+        body: JSON.stringify({ image: optimizedBase64 }),
       });
  
       if (!res.ok) {
@@ -478,27 +532,13 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     triggerToast("AI is scanning and analyzing the spotlight image...");
  
     try {
-      let base64Image = imageSrc;
- 
-      if (!imageSrc.startsWith('data:')) {
-        try {
-          const response = await fetch(imageSrc);
-          const blob = await response.blob();
-          base64Image = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-        } catch (e) {
-          console.warn("Could not convert spotlight image URL to base64 on client, passing URL directly", e);
-        }
-      }
+      // Optimize image client-side to dramatically speed up request and analysis times
+      const optimizedBase64 = await compressAndResizeImage(imageSrc);
  
       const res = await fetch("/api/gemini/analyze-spotlight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64Image }),
+        body: JSON.stringify({ image: optimizedBase64 }),
       });
  
       if (!res.ok) {
@@ -566,7 +606,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         setSupabaseTestResult({
           success: true,
           message: data.message,
-          details: data.details
+          details: data.details,
+          tablesDiagnostics: data.tablesDiagnostics
         });
         triggerToast("Supabase Connection Successful!");
         logAdminAction("Successfully tested Supabase database connection", "system");
@@ -704,8 +745,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
   const [pullingAll, setPullingAll] = useState(false);
 
-  const loadAllDataFromSupabase = async () => {
-    setPullingAll(true);
+  const loadAllDataFromSupabase = async (silent = false) => {
+    if (!silent) setPullingAll(true);
     let successCount = 0;
 
     const tablesToPull = [
@@ -715,7 +756,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       { key: 'olamide_visuals_transactions', table: 'transactions', setter: setTransactions },
       { key: 'olamide_visuals_messages', table: 'messages', setter: setMessages },
       { key: 'olamide_visuals_logs', table: 'logs', setter: setLogs },
-      { key: 'olamide_visuals_portfolio_items', table: 'portfolio_items', setter: setPortfolioItems },
+      { key: 'olamide_visuals_portfolio_items', table: 'portfolio', setter: setPortfolioItems },
       { key: 'olamide_visuals_media', table: 'media', setter: setMediaItems },
       { key: 'olamide_visuals_instagram_posts', table: 'instagram', setter: setInstagramPosts },
       { key: 'olamide_visuals_spotlight', table: 'spotlight', setter: setSpotlightItems },
@@ -733,7 +774,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           }
         }
       } catch (err) {
-        console.warn(`[SUPABASE INITIAL LOAD] Failed to pull from table ${t.table}:`, err);
+        if (!silent) {
+          console.warn(`[SUPABASE INITIAL LOAD] Failed to pull from table ${t.table}:`, err);
+        }
       }
     }
 
@@ -773,10 +816,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         }
       }
     } catch (err) {
-      console.warn(`[SUPABASE INITIAL LOAD] Failed to pull content:`, err);
+      if (!silent) {
+        console.warn(`[SUPABASE INITIAL LOAD] Failed to pull content:`, err);
+      }
     }
 
-    setPullingAll(false);
+    if (!silent) setPullingAll(false);
     return successCount;
   };
 
@@ -924,6 +969,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }, 12000); // every 12 seconds
 
     // Silent automatic connection validation on dashboard load to populate server cache
+    let supabasePollId: any = null;
     const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
     const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
     if (storedUrl && storedAnon) {
@@ -937,6 +983,11 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         if (data.success) {
           console.log("Supabase connection verified on mount. Pulling latest data from cloud tables...");
           loadAllDataFromSupabase();
+          
+          // Background polling to keep dashboard in perfect real-time sync with database
+          supabasePollId = setInterval(() => {
+            loadAllDataFromSupabase(true);
+          }, 5000);
         }
       })
       .catch(err => console.warn("Silent credentials synchronization failed on mount:", err));
@@ -958,6 +1009,9 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       window.removeEventListener('storage', syncDatabaseRealtime);
       clearInterval(intervalId);
       clearInterval(trafficIntervalId);
+      if (supabasePollId) {
+        clearInterval(supabasePollId);
+      }
     };
   }, []);
 
@@ -965,11 +1019,21 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const syncBookings = (updated: BookingData[]) => {
     setBookings(updated);
     saveToDB('olamide_visuals_bookings', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('bookings', updated);
+    }
   };
 
   const syncMediaItems = (updated: { id: string; url: string; name: string; size: string; folder: string }[]) => {
     setMediaItems(updated);
     saveToDB('olamide_visuals_media', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('media', updated);
+    }
   };
 
   const handleDeleteMediaItem = (id: string) => {
@@ -1073,21 +1137,41 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const syncCrew = (updated: CrewMember[]) => {
     setCrew(updated);
     saveToDB('olamide_visuals_crew', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('crew', updated);
+    }
   };
 
   const syncBlog = (updated: BlogPost[]) => {
     setBlog(updated);
     saveToDB('olamide_visuals_blog', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('blog', updated);
+    }
   };
 
   const syncTransactions = (updated: Transaction[]) => {
     setTransactions(updated);
     saveToDB('olamide_visuals_transactions', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('transactions', updated);
+    }
   };
 
   const syncMessages = (updated: ContactMessage[]) => {
     setMessages(updated);
     saveToDB('olamide_visuals_messages', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('messages', updated);
+    }
   };
 
   const syncContent = (updated: WebsiteContent) => {
@@ -1104,12 +1188,22 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setPortfolioItems(updated);
     saveToDB('olamide_visuals_portfolio_items', updated);
     setUploadDiagnostics(prev => prev ? { ...prev, dbRecordCreated: true } : null);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('portfolio', updated);
+    }
   };
 
   const syncInstagramPosts = (updated: { id: string; imageUrl: string; likes: string; comments: string }[]) => {
     setInstagramPosts(updated);
     saveToDB('olamide_visuals_instagram_posts', updated);
     setUploadDiagnostics(prev => prev ? { ...prev, dbRecordCreated: true } : null);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('instagram', updated);
+    }
   };
 
   const handleIgImageUpload = (file: File) => {
@@ -1177,6 +1271,11 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const syncSpotlightItems = (updated: SpotlightItem[]) => {
     setSpotlightItems(updated);
     saveToDB('olamide_visuals_spotlight', updated);
+    const storedUrl = localStorage.getItem('olamide_visuals_supabase_url');
+    const storedAnon = localStorage.getItem('olamide_visuals_supabase_anon_key');
+    if (storedUrl && storedAnon) {
+      syncTableToSupabase('spotlight', updated);
+    }
   };
 
   const handleSpotlightImageUpload = (file: File) => {
@@ -4419,6 +4518,40 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                             {supabaseTestResult.details}
                           </pre>
                         )}
+                        {supabaseTestResult.tablesDiagnostics && (
+                          <div className="mt-3 border-t border-white/5 pt-3 space-y-2">
+                            <h4 className="font-bold text-[10px] text-white uppercase tracking-wider">Database Tables Health Checklist:</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[9px] font-sans">
+                              {Object.entries(supabaseTestResult.tablesDiagnostics).map(([tableName, statusValue]) => {
+                                const status = statusValue as any;
+                                return (
+                                  <div key={tableName} className="flex items-start space-x-2 p-1.5 bg-black/40 border border-white/5 rounded">
+                                    <div className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${
+                                      status.exists && status.accessible 
+                                        ? 'bg-emerald-500' 
+                                        : status.exists 
+                                          ? 'bg-amber-500' 
+                                          : 'bg-red-500'
+                                    }`} />
+                                    <div className="space-y-0.5 leading-tight">
+                                      <span className="font-bold text-zinc-200 block font-mono">{tableName}</span>
+                                      <span className="text-[8px] text-zinc-400 block font-mono uppercase">
+                                        {status.exists 
+                                          ? (status.accessible ? 'Created & Accessible' : 'RLS Policy Active (Cannot Read)')
+                                          : 'Not Created'}
+                                      </span>
+                                      {status.error && !status.accessible && (
+                                        <span className="text-amber-500 block text-[8px] mt-0.5 leading-normal">
+                                          Note: {status.error}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -4439,18 +4572,18 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     {/* Portfolio Card */}
                     <div className="p-4 bg-black border border-white/5 space-y-3 font-mono flex flex-col justify-between">
                       <div className="space-y-1">
-                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: portfolio_items</span>
+                        <span className="text-[9px] text-gold font-bold uppercase tracking-wider block">TABLE: portfolio</span>
                         <h4 className="text-xs font-bold text-white uppercase font-serif">Portfolio Artwork</h4>
                         <p className="text-[9px] text-zinc-500">Fine-art and client showcase items.</p>
                       </div>
                       <div className="flex items-center justify-between pt-2 border-t border-white/5">
                         <span className="text-[10px] text-zinc-400">{portfolioItems.length} records</span>
                         <button
-                          disabled={syncingTables['portfolio_items'] || supabaseTesting}
-                          onClick={() => syncTableToSupabase('portfolio_items', portfolioItems)}
+                          disabled={syncingTables['portfolio'] || supabaseTesting}
+                          onClick={() => syncTableToSupabase('portfolio', portfolioItems)}
                           className="px-3 py-1.5 bg-gold text-black hover:bg-white text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 cursor-pointer"
                         >
-                          {syncingTables['portfolio_items'] ? 'Syncing...' : 'Sync Now'}
+                          {syncingTables['portfolio'] ? 'Syncing...' : 'Sync Now'}
                         </button>
                       </div>
                     </div>
@@ -4723,17 +4856,27 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </p>
                 </div>
 
+                {/* Highly prominent setup alert box */}
+                <div className="p-4 bg-yellow-950/20 border border-yellow-500/20 rounded space-y-2.5 text-zinc-300 font-mono text-[11px] leading-relaxed">
+                  <span className="text-yellow-400 font-bold uppercase tracking-wider block">⚠️ CRITICAL SUPABASE REQUIRED SETUP STEPS</span>
+                  <div className="space-y-1.5 list-decimal pl-4">
+                    <p>1. <strong className="text-white font-semibold">Create Storage Bucket:</strong> Go to your Supabase Console &rarr; <strong className="text-white">Storage</strong> &rarr; click <strong className="text-white">New Bucket</strong>, name it exactly <strong className="text-gold">"portfolio"</strong>, and make sure to toggle <strong className="text-white">"Public bucket"</strong> to ON.</p>
+                    <p>2. <strong className="text-white font-semibold">Run Table Schema:</strong> Go to your Supabase Console &rarr; <strong className="text-white">SQL Editor</strong>, click <strong className="text-white">New Query</strong>, paste the <strong className="text-gold">1. PORTFOLIO SQL</strong> from below, and click <strong className="text-white">Run</strong>.</p>
+                    <p>3. <strong className="text-white font-semibold">Disable RLS or Configure Policies:</strong> In your Supabase Console &rarr; Database &rarr; <strong className="text-white">RLS Policies</strong>, make sure <code className="text-zinc-400 bg-white/5 px-1 py-0.5">portfolio</code> has public select and insert policies enabled, or disable RLS for testing.</p>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 font-mono text-[10px]">
                   
                   {/* Schema 1: Portfolio Items */}
                   <div className="p-4 bg-black border border-white/5 space-y-2.5 flex flex-col justify-between">
                     <div className="space-y-1">
-                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">1. PORTFOLIO ITEMS SQL</span>
-                      <p className="text-zinc-500 text-[9px]">Creates the 'portfolio_items' table with correct column fields.</p>
+                      <span className="text-gold font-bold uppercase tracking-widest text-[9px]">1. PORTFOLIO SQL</span>
+                      <p className="text-zinc-500 text-[9px]">Creates the 'portfolio' table with correct column fields.</p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(`create table portfolio_items (
+                      onClick={() => copyToClipboard(`create table portfolio (
   id text primary key,
   title text not null,
   category text,
@@ -4746,10 +4889,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   aspect text,
   location text,
   year text
-);`, 'portfolio_items')}
+);`, 'portfolio')}
                       className="w-full py-2 bg-zinc-900 border border-white/10 hover:border-gold/30 text-zinc-300 hover:text-white uppercase font-bold text-[9px] tracking-widest transition-colors cursor-pointer"
                     >
-                      {copiedText === 'portfolio_items' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
+                      {copiedText === 'portfolio' ? '✓ SQL COPIED' : 'COPY SCHEMAS SQL'}
                     </button>
                   </div>
 

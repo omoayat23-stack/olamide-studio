@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, Play, Compass, Aperture } from 'lucide-react';
 import { HERO_SLIDES } from '../data';
+import { getFromDB } from '../admin/db';
 
 interface HeroProps {
   onExploreClick: () => void;
@@ -15,20 +16,129 @@ interface HeroProps {
 
 export default function Hero({ onExploreClick, onBookClick }: HeroProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [slides, setSlides] = useState<any[]>(() => {
+    const localSpotlights = getFromDB<any[]>('olamide_visuals_spotlight', []);
+    if (localSpotlights && localSpotlights.length > 0) {
+      return localSpotlights.map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        subtitle: item.tagline || item.description || '',
+        image: item.imageUrl || item.url,
+        tag: item.category ? item.category.toUpperCase() : 'FEATURED STORY',
+        isDynamic: true
+      }));
+    }
+    return HERO_SLIDES;
+  });
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentSlide((prev) => (prev + 1) % HERO_SLIDES.length);
-    }, 6500); // Rotate slides every 6.5s
-    return () => clearInterval(timer);
+    let active = true;
+    const fetchSpotlights = async () => {
+      try {
+        const res = await fetch('/api/supabase/fetch?table=spotlight');
+        if (!res.ok) {
+          throw new Error(`Failed to fetch spotlights: ${res.statusText}`);
+        }
+        const result = await res.json();
+        if (result.success && result.data && result.data.length > 0 && active) {
+          const mapped = result.data.map((item: any) => ({
+            id: item.id,
+            title: item.title,
+            subtitle: item.tagline || item.description || '',
+            image: item.imageUrl || item.url,
+            tag: item.category ? item.category.toUpperCase() : 'FEATURED STORY',
+            isDynamic: true
+          }));
+          // Prevent redundant state updates if data remains unchanged to preserve auto-transition timers
+          setSlides((prevSlides) => {
+            if (prevSlides.length !== mapped.length) return mapped;
+            const isDifferent = mapped.some((slide, index) => {
+              const prev = prevSlides[index];
+              return (
+                !prev ||
+                prev.id !== slide.id ||
+                prev.title !== slide.title ||
+                prev.subtitle !== slide.subtitle ||
+                prev.image !== slide.image ||
+                prev.tag !== slide.tag
+              );
+            });
+            return isDifferent ? mapped : prevSlides;
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to fetch spotlight slides from Supabase:", err);
+      }
+    };
+
+    fetchSpotlights();
+    const interval = setInterval(fetchSpotlights, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
 
+  useEffect(() => {
+    if (slides.length === 0) return;
+    const timer = setInterval(() => {
+      setCurrentSlide((prev) => (prev + 1) % slides.length);
+    }, 6500); // Rotate slides every 6.5s
+    return () => clearInterval(timer);
+  }, [slides]);
+
   const handleNext = () => {
-    setCurrentSlide((prev) => (prev + 1) % HERO_SLIDES.length);
+    if (slides.length === 0) return;
+    setCurrentSlide((prev) => (prev + 1) % slides.length);
   };
 
   const handlePrev = () => {
-    setCurrentSlide((prev) => (prev - 1 + HERO_SLIDES.length) % HERO_SLIDES.length);
+    if (slides.length === 0) return;
+    setCurrentSlide((prev) => (prev - 1 + slides.length) % slides.length);
+  };
+
+  const renderSlideTitle = (slide: any) => {
+    if (slide.id === 'slide1') {
+      return (
+        <>
+          <span className="italic block font-normal">Capturing</span>{' '}
+          <span className="text-gold font-normal">Moments.</span><br />
+          Timeless Stories.
+        </>
+      );
+    }
+    if (slide.id === 'slide2') {
+      return (
+        <>
+          <span className="italic block font-normal text-gold">Uncompromising</span><br />
+          Editorial Artistry.
+        </>
+      );
+    }
+    if (slide.id === 'slide3') {
+      return (
+        <>
+          <span className="italic block font-normal">Celebrating</span>{' '}
+          <span className="text-gold font-normal">Academic</span> Excellence.
+        </>
+      );
+    }
+
+    // Dynamic titles
+    const words = (slide.title || '').split(' ');
+    if (words.length <= 1) {
+      return <span className="italic block font-normal">{slide.title}</span>;
+    }
+    const first = words[0];
+    const second = words[1];
+    const rest = words.slice(2).join(' ');
+    return (
+      <>
+        <span className="italic block font-normal">{first}</span>{' '}
+        <span className="text-gold font-normal">{second}</span>{rest ? <><br />{rest}</> : null}
+      </>
+    );
   };
 
   return (
@@ -73,7 +183,7 @@ export default function Hero({ onExploreClick, onBookClick }: HeroProps) {
 
       {/* Hero Slideshow Backgrounds */}
       <AnimatePresence mode="wait">
-        {HERO_SLIDES.map((slide, index) => {
+        {slides.map((slide, index) => {
           if (index !== currentSlide) return null;
           return (
             <motion.div
@@ -104,7 +214,7 @@ export default function Hero({ onExploreClick, onBookClick }: HeroProps) {
       <div className="absolute inset-0 flex items-center z-30 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto md:mx-0 w-full text-center md:text-left mt-16 md:mt-0">
           <AnimatePresence mode="wait">
-            {HERO_SLIDES.map((slide, index) => {
+            {slides.map((slide, index) => {
               if (index !== currentSlide) return null;
               return (
                 <div key={`content-${slide.id}`} className="space-y-6">
@@ -130,23 +240,7 @@ export default function Hero({ onExploreClick, onBookClick }: HeroProps) {
                     transition={{ duration: 0.8, delay: 0.3 }}
                     className="text-4xl sm:text-5xl md:text-7xl font-serif font-light tracking-tight text-white leading-[1.1]"
                   >
-                    {slide.id === 'slide1' ? (
-                      <>
-                        <span className="italic block font-normal">Capturing</span>{' '}
-                        <span className="text-gold font-normal">Moments.</span><br />
-                        Timeless Stories.
-                      </>
-                    ) : slide.id === 'slide2' ? (
-                      <>
-                        <span className="italic block font-normal text-gold">Uncompromising</span><br />
-                        Editorial Artistry.
-                      </>
-                    ) : (
-                      <>
-                        <span className="italic block font-normal">Celebrating</span>{' '}
-                        <span className="text-gold font-normal">Academic</span> Excellence.
-                      </>
-                    )}
+                    {renderSlideTitle(slide)}
                   </motion.h1>
 
                   {/* Subtitle */}
@@ -205,7 +299,7 @@ export default function Hero({ onExploreClick, onBookClick }: HeroProps) {
 
       {/* Progress Slide indicators */}
       <div className="absolute bottom-10 left-1/2 -translate-x-1/2 md:left-auto md:right-12 md:translate-x-0 z-30 flex items-center space-x-4">
-        {HERO_SLIDES.map((slide, index) => (
+        {slides.map((slide, index) => (
           <button
             key={`indicator-${slide.id}`}
             onClick={() => setCurrentSlide(index)}

@@ -310,11 +310,57 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
           console.error("[SUPABASE TEST] Error caching credentials to file:", fsErr);
         }
 
+        // Run diagnostic checks on all tables
+        const tablesToCheck = [
+          'portfolio_items',
+          'portfolio',
+          'spotlight',
+          'bookings',
+          'messages',
+          'crew',
+          'blog',
+          'instagram',
+          'media',
+          'transactions',
+          'logs'
+        ];
+
+        const supabase = createClient(url, anonKey);
+        const tablesDiagnostics: Record<string, { exists: boolean; accessible: boolean; error: string | null; code: string | null }> = {};
+        
+        for (const table of tablesToCheck) {
+          try {
+            const { error } = await supabase.from(table).select('*').limit(1);
+            if (!error) {
+              tablesDiagnostics[table] = { exists: true, accessible: true, error: null, code: null };
+            } else {
+              const code = error.code;
+              const isMissing = code === '42P01' || error.message?.includes("does not exist") || error.message?.includes("Could not find the table") || error.message?.includes("schema cache");
+              const isRls = code === '42501' || error.message?.includes("insufficient_privilege") || error.message?.includes("row-level security");
+              
+              tablesDiagnostics[table] = {
+                exists: !isMissing,
+                accessible: !isMissing && !isRls,
+                error: error.message,
+                code: code || null
+              };
+            }
+          } catch (err: any) {
+            tablesDiagnostics[table] = {
+              exists: false,
+              accessible: false,
+              error: err.message || String(err),
+              code: 'SYSTEM_ERROR'
+            };
+          }
+        }
+
         return res.json({
           success: true,
           message: "Successfully connected to Supabase API & Database!",
           details: verificationResult.details,
-          envConfigured: true
+          envConfigured: true,
+          tablesDiagnostics
         });
       } else {
         const error = verificationResult.error;
@@ -458,7 +504,30 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
       const supabase = createClient(url, anonKey);
       console.log(`[SUPABASE FETCH] Fetching all records from table '${table}'...`);
 
-      const { data, error } = await supabase.from(table).select("*");
+      let resolvedTable = table;
+      let { data, error } = await supabase.from(resolvedTable).select("*");
+
+      if (error) {
+        const isTableMissing = 
+          error.code === '42P01' || 
+          error.code === 'PGRST116' || 
+          (error.message && (
+            error.message.includes("Could not find the table") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("schema cache")
+          ));
+
+        if (isTableMissing && (table === 'portfolio_items' || table === 'portfolio')) {
+          resolvedTable = table === 'portfolio_items' ? 'portfolio' : 'portfolio_items';
+          console.log(`[SUPABASE FETCH FALLBACK] Table '${table}' not found, trying '${resolvedTable}'...`);
+          const fallbackResult = await supabase.from(resolvedTable).select("*");
+          if (!fallbackResult.error) {
+            data = fallbackResult.data;
+            error = null;
+            console.log(`[SUPABASE FETCH FALLBACK SUCCESS] Successfully fetched from fallback table '${resolvedTable}'`);
+          }
+        }
+      }
 
       if (error) {
         const isTableMissing = 
@@ -471,16 +540,16 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
           ));
 
         if (isTableMissing) {
-          console.log(`[SUPABASE FETCH GRACEFUL FALLBACK] Table '${table}' does not exist on Supabase. Gracefully returning empty array.`);
+          console.log(`[SUPABASE FETCH GRACEFUL FALLBACK] Table '${resolvedTable}' does not exist on Supabase. Gracefully returning empty array.`);
           return res.json({ 
             success: true, 
             data: [], 
-            message: `Table '${table}' does not exist yet. Please run the corresponding SQL schema in your Supabase SQL Editor.`,
+            message: `Table '${resolvedTable}' does not exist yet. Please run the corresponding SQL schema in your Supabase SQL Editor.`,
             tableMissing: true
           });
         }
 
-        console.error(`[SUPABASE FETCH ERROR] Error fetching from table '${table}':`, error);
+        console.error(`[SUPABASE FETCH ERROR] Error fetching from table '${resolvedTable}':`, error);
         return res.status(500).json({ success: false, error: error.message, details: error });
       }
 
@@ -508,7 +577,29 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
       const supabase = createClient(url, anonKey);
       console.log(`[SUPABASE DELETE] Deleting record '${id}' from table '${tableName}'...`);
 
-      const { error } = await supabase.from(tableName).delete().eq("id", id);
+      let resolvedTable = tableName;
+      let { error } = await supabase.from(resolvedTable).delete().eq("id", id);
+
+      if (error) {
+        const isTableMissing = 
+          error.code === '42P01' || 
+          error.code === 'PGRST116' || 
+          (error.message && (
+            error.message.includes("Could not find the table") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("schema cache")
+          ));
+
+        if (isTableMissing && (tableName === 'portfolio_items' || tableName === 'portfolio')) {
+          resolvedTable = tableName === 'portfolio_items' ? 'portfolio' : 'portfolio_items';
+          console.log(`[SUPABASE DELETE FALLBACK] Table '${tableName}' not found, trying '${resolvedTable}'...`);
+          const fallbackResult = await supabase.from(resolvedTable).delete().eq("id", id);
+          if (!fallbackResult.error) {
+            error = null;
+            console.log(`[SUPABASE DELETE FALLBACK SUCCESS] Successfully deleted from fallback table '${resolvedTable}'`);
+          }
+        }
+      }
 
       if (error) {
         const isTableMissing = 
@@ -521,19 +612,19 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
           ));
 
         if (isTableMissing) {
-          console.warn(`[SUPABASE DELETE WARNING] Table '${tableName}' does not exist on Supabase. Gracefully skipping cloud deletion.`);
+          console.warn(`[SUPABASE DELETE WARNING] Table '${resolvedTable}' does not exist on Supabase. Gracefully skipping cloud deletion.`);
           return res.json({ 
             success: true, 
-            message: `Table '${tableName}' does not exist yet. Gracefully skipped cloud deletion.`,
+            message: `Table '${resolvedTable}' does not exist yet. Gracefully skipped cloud deletion.`,
             tableMissing: true
           });
         }
 
-        console.error(`[SUPABASE DELETE ERROR] Error deleting from table '${tableName}':`, error);
+        console.error(`[SUPABASE DELETE ERROR] Error deleting from table '${resolvedTable}':`, error);
         return res.status(500).json({ success: false, error: error.message, details: error });
       }
 
-      return res.json({ success: true, message: `Successfully deleted record with ID '${id}' from table '${tableName}'` });
+      return res.json({ success: true, message: `Successfully deleted record with ID '${id}' from table '${resolvedTable}'` });
     } catch (err: any) {
       console.error("[SUPABASE DELETE FATAL ERROR]", err);
       return res.status(500).json({ success: false, error: err.message || err });
@@ -581,10 +672,127 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
         console.error("[SUPABASE SYNC] Error caching credentials to file:", fsErr);
       }
 
+      // Sanitize and map records to strictly match Supabase columns, avoiding PostgreSQL Column Mismatch errors.
+      let resolvedTableName = tableName;
+      const getSanitizedRecords = (targetTable: string) => {
+        return records.map((item: any) => {
+          const clean: any = {};
+          const normalizedTable = targetTable.toLowerCase();
+
+          if (normalizedTable === 'portfolio' || normalizedTable === 'portfolio_items') {
+            const allowed = ['id', 'title', 'category', 'imageUrl', 'client', 'date', 'description', 'likes', 'views', 'aspect', 'location', 'year'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+            if (clean.imageUrl === undefined && item.url !== undefined) {
+              clean.imageUrl = item.url;
+            }
+          } else if (normalizedTable === 'spotlight') {
+            const allowed = ['id', 'title', 'category', 'tagline', 'description', 'technicalSpecs', 'imageUrl', 'createdAt'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else if (normalizedTable === 'bookings') {
+            const allowed = ['id', 'name', 'email', 'phone', 'date', 'time', 'eventType', 'status', 'notes', 'total', 'paid', 'createdAt'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+            if (clean.date === undefined && item.preferredDate !== undefined) {
+              clean.date = item.preferredDate;
+            }
+            if (clean.notes === undefined && item.message !== undefined) {
+              clean.notes = item.message;
+            }
+          } else if (normalizedTable === 'messages') {
+            const allowed = ['id', 'name', 'email', 'subject', 'message', 'status', 'date'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else if (normalizedTable === 'crew') {
+            const allowed = ['id', 'name', 'role', 'bio', 'imageUrl', 'instagram', 'order'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+            if (clean.imageUrl === undefined && item.photoUrl !== undefined) {
+              clean.imageUrl = item.photoUrl;
+            }
+          } else if (normalizedTable === 'blog') {
+            const allowed = ['id', 'title', 'category', 'excerpt', 'content', 'imageUrl', 'author', 'date', 'readTime', 'published'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+            if (clean.published === undefined && item.status !== undefined) {
+              clean.published = item.status === 'published';
+            }
+            if (clean.date === undefined && item.publishDate !== undefined) {
+              clean.date = item.publishDate;
+            }
+            if (clean.excerpt === undefined && item.content !== undefined) {
+              clean.excerpt = typeof item.content === 'string' ? item.content.substring(0, 150) + '...' : '';
+            }
+          } else if (normalizedTable === 'instagram') {
+            const allowed = ['id', 'imageUrl', 'likes', 'comments'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else if (normalizedTable === 'content') {
+            const allowed = ['id', 'biography', 'profileImage', 'businessAddress', 'logoText', 'tagline', 'primaryColor', 'fontFamily', 'faviconUrl', 'heroTitle', 'heroSubTitle', 'heroCtaText'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else if (normalizedTable === 'media') {
+            const allowed = ['id', 'url', 'name', 'size', 'folder'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else if (normalizedTable === 'transactions') {
+            const allowed = ['id', 'bookingId', 'clientName', 'amount', 'status', 'date', 'method'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else if (normalizedTable === 'logs') {
+            const allowed = ['id', 'timestamp', 'action', 'category', 'user', 'ip', 'device'];
+            allowed.forEach(k => {
+              if (item[k] !== undefined) clean[k] = item[k];
+            });
+          } else {
+            return { ...item };
+          }
+
+          if (!clean.id && item.id) {
+            clean.id = item.id;
+          }
+          return clean;
+        });
+      };
+
       // Perform an upsert on the table using 'id' as the conflict resolution column.
-      const { error } = await supabase
-        .from(tableName)
-        .upsert(records, { onConflict: 'id' });
+      let { error } = await supabase
+        .from(resolvedTableName)
+        .upsert(getSanitizedRecords(resolvedTableName), { onConflict: 'id' });
+
+      if (error) {
+        const isTableMissing = 
+          error.code === '42P01' || 
+          error.code === 'PGRST116' || 
+          (error.message && (
+            error.message.includes("Could not find the table") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("schema cache")
+          ));
+
+        if (isTableMissing && (tableName === 'portfolio_items' || tableName === 'portfolio')) {
+          resolvedTableName = tableName === 'portfolio_items' ? 'portfolio' : 'portfolio_items';
+          console.log(`[SUPABASE SYNC FALLBACK] Table '${tableName}' not found, trying '${resolvedTableName}'...`);
+          const fallbackResult = await supabase
+            .from(resolvedTableName)
+            .upsert(getSanitizedRecords(resolvedTableName), { onConflict: 'id' });
+          if (!fallbackResult.error) {
+            error = null;
+            console.log(`[SUPABASE SYNC FALLBACK SUCCESS] Successfully synced to fallback table '${resolvedTableName}'`);
+          }
+        }
+      }
 
       if (error) {
         const isTableMissing = 
@@ -597,26 +805,26 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
           ));
 
         if (isTableMissing) {
-          console.warn(`[SUPABASE SYNC WARNING] Table '${tableName}' does not exist on Supabase yet. This is expected if you haven't run the SQL schema creation commands yet. Gracefully falling back.`);
+          console.warn(`[SUPABASE SYNC WARNING] Table '${resolvedTableName}' does not exist on Supabase yet. This is expected if you haven't run the SQL schema creation commands yet. Gracefully falling back.`);
           return res.json({
             success: true,
-            message: `Table '${tableName}' is not yet created in your Supabase database. Local data has been saved safely, and sync will retry once the table is created.`,
+            message: `Table '${resolvedTableName}' is not yet created in your Supabase database. Local data has been saved safely, and sync will retry once the table is created.`,
             tableMissing: true
           });
         }
 
-        console.warn(`[SUPABASE SYNC EXCEPTION] Sync problem for table ${tableName}:`, error.message);
+        console.warn(`[SUPABASE SYNC EXCEPTION] Sync problem for table ${resolvedTableName}:`, error.message);
         return res.status(500).json({ 
           success: false, 
           error: error.message,
           details: error,
-          hint: `Please verify that the table '${tableName}' exists in your Supabase database with columns that match your records, and that Row Level Security (RLS) is disabled or has policies configured to allow INSERT/UPDATE.`
+          hint: `Please verify that the table '${resolvedTableName}' exists in your Supabase database with columns that match your records, and that Row Level Security (RLS) is disabled or has policies configured to allow INSERT/UPDATE.`
         });
       }
 
       return res.json({
         success: true,
-        message: `Successfully synchronized ${records.length} records to Supabase table '${tableName}'!`
+        message: `Successfully synchronized ${records.length} records to Supabase table '${resolvedTableName}'!`
       });
     } catch (error: any) {
       console.error("General Sync Error:", error);
@@ -627,17 +835,55 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
     }
   });
 
-  // Helper function for resilient retries with backing off
-  async function runWithRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
+  // Helper function for resilient retries with exponential backoff
+  async function runWithRetry<T>(fn: () => Promise<T>, retries = 4, initialDelay = 1500): Promise<T> {
     let lastError: any;
     for (let i = 0; i < retries; i++) {
       try {
         return await fn();
       } catch (err) {
         lastError = err;
-        console.warn(`Attempt ${i + 1} failed. Retrying in ${delay}ms...`, err);
+        const currentDelay = initialDelay * Math.pow(2, i);
+        console.warn(`Attempt ${i + 1} failed. Retrying in ${currentDelay}ms...`, err);
         if (i < retries - 1) {
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise(resolve => setTimeout(resolve, currentDelay));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  // Helper function for calling generateContent with model fallback and resilient retries
+  async function generateContentWithFallback(ai: any, params: any, retries = 2, initialDelay = 1000): Promise<any> {
+    const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-flash-lite"];
+    let lastError: any;
+
+    for (const model of modelsToTry) {
+      for (let i = 0; i < retries; i++) {
+        try {
+          console.log(`[GEMINI] Attempting content generation using model: ${model} (attempt ${i + 1})`);
+          const response = await ai.models.generateContent({
+            ...params,
+            model: model
+          });
+          return response;
+        } catch (err: any) {
+          lastError = err;
+          const status = err.status || err.code || (err.message && err.message.includes("503") ? 503 : null);
+          const isUnavailable = status === 503 || status === 429 || (err.message && (err.message.includes("UNAVAILABLE") || err.message.includes("high demand") || err.message.includes("limit")));
+          
+          console.warn(`[GEMINI] Attempt ${i + 1} with ${model} failed:`, err.message || err);
+          
+          if (isUnavailable && model === "gemini-3.5-flash") {
+            // If experiencing high demand or 503, immediately break the retry loop and fall back to the next model
+            console.log(`[GEMINI] Model ${model} is experiencing high demand. Falling back to the next model immediately.`);
+            break;
+          }
+
+          if (i < retries - 1) {
+            const currentDelay = initialDelay * Math.pow(1.5, i);
+            await new Promise(resolve => setTimeout(resolve, currentDelay));
+          }
         }
       }
     }
@@ -715,9 +961,17 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
 
       if (uploadError) {
         console.error("Supabase Storage upload error:", uploadError);
+        let userFriendlyError = uploadError.message;
+        if (uploadError.message && (
+          uploadError.message.includes("Bucket not found") || 
+          uploadError.message.includes("does not exist") ||
+          uploadError.message.toLowerCase().includes("not_found")
+        )) {
+          userFriendlyError = 'The "portfolio" Storage Bucket does not exist on your Supabase project. To resolve this, go to your Supabase Console -> Storage -> Buckets, create a new bucket named "portfolio", and ensure you toggle "Public bucket" ON.';
+        }
         return res.status(500).json({
           success: false,
-          error: `Supabase Storage upload failed: ${uploadError.message}. Fallbacks have been disabled.`
+          error: `Supabase Storage upload failed: ${userFriendlyError}`
         });
       }
 
@@ -803,6 +1057,53 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
     }
   });
 
+  // Helper to resolve an image input (data URL, raw base64, or remote HTTP/HTTPS URL) to clean base64 data and mimeType
+  async function resolveImageToBase64(imageInput: string): Promise<{ base64Data: string; mimeType: string }> {
+    if (!imageInput) {
+      throw new Error("Missing image input");
+    }
+
+    // Case 1: Data URL
+    if (imageInput.startsWith("data:")) {
+      const match = imageInput.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        return {
+          mimeType: match[1],
+          base64Data: match[2],
+        };
+      }
+      throw new Error("Invalid data URL format");
+    }
+
+    // Case 2: HTTP/HTTPS URL
+    if (imageInput.startsWith("http://") || imageInput.startsWith("https://")) {
+      try {
+        const response = await fetch(imageInput);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image from URL: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64Data = buffer.toString("base64");
+        
+        let mimeType = response.headers.get("content-type") || "image/jpeg";
+        if (!mimeType.startsWith("image/")) {
+          mimeType = "image/jpeg";
+        }
+        return { base64Data, mimeType };
+      } catch (err: any) {
+        console.error("[IMAGE RESOLVE ERROR] Failed to download remote image URL:", err);
+        throw new Error(`Failed to download and process remote image: ${err.message || err}`);
+      }
+    }
+
+    // Case 3: Raw base64 data (default to image/jpeg)
+    return {
+      base64Data: imageInput,
+      mimeType: "image/jpeg",
+    };
+  }
+
   app.post("/api/gemini/analyze-image", async (req: express.Request, res: express.Response) => {
     try {
       const { image } = req.body;
@@ -810,16 +1111,8 @@ function getSupabaseConfig(): { url: string | null; anonKey: string | null } {
         return res.status(400).json({ error: "Missing image data" });
       }
 
-      // Parse data URL if present
-      let mimeType = "image/jpeg";
-      let base64Data = image;
-      if (image.startsWith("data:")) {
-        const match = image.match(/^data:([^;]+);base64,(.+)$/);
-        if (match) {
-          mimeType = match[1];
-          base64Data = match[2];
-        }
-      }
+      // Resolve the image input (handles URLs, data URLs, and base64) securely server-side
+      const { base64Data, mimeType } = await resolveImageToBase64(image);
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
@@ -859,53 +1152,50 @@ Return your response in structured JSON format matching this schema:
   "tags": ["tag1", "tag2", "tag3"]
 }`;
 
-      const response = await runWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
+      const response = await generateContentWithFallback(ai, {
+        contents: [
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data
+            }
+          },
+          prompt
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              visualAudit: {
+                type: Type.STRING,
+                description: "A summary of scanned visual elements, lighting, and textures."
+              },
+              criticalCheck: {
+                type: Type.STRING,
+                description: "The visual check or evidence verified before confirming the category."
+              },
+              category: {
+                type: Type.STRING,
+                description: "The validated category: 'Weddings', 'Portraits', 'Fashion', 'Graduation', or 'Behind The Scenes'."
+              },
+              title: {
+                type: Type.STRING,
+                description: "A highly specific, poetic, non-generic title based on the visual evidence."
+              },
+              description: {
+                type: Type.STRING,
+                description: "A 1-2 sentence high-end editorial narrative."
+              },
+              tags: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "3-5 lowercase aesthetic tags describing the photograph."
               }
             },
-            prompt
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                visualAudit: {
-                  type: Type.STRING,
-                  description: "A summary of scanned visual elements, lighting, and textures."
-                },
-                criticalCheck: {
-                  type: Type.STRING,
-                  description: "The visual check or evidence verified before confirming the category."
-                },
-                category: {
-                  type: Type.STRING,
-                  description: "The validated category: 'Weddings', 'Portraits', 'Fashion', 'Graduation', or 'Behind The Scenes'."
-                },
-                title: {
-                  type: Type.STRING,
-                  description: "A highly specific, poetic, non-generic title based on the visual evidence."
-                },
-                description: {
-                  type: Type.STRING,
-                  description: "A 1-2 sentence high-end editorial narrative."
-                },
-                tags: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: "3-5 lowercase aesthetic tags describing the photograph."
-                }
-              },
-              required: ["visualAudit", "criticalCheck", "category", "title", "description", "tags"]
-            }
+            required: ["visualAudit", "criticalCheck", "category", "title", "description", "tags"]
           }
-        });
+        }
       });
 
       const jsonText = response.text || "{}";
@@ -934,16 +1224,8 @@ Return your response in structured JSON format matching this schema:
         return res.status(400).json({ error: "Missing image data" });
       }
 
-      // Parse data URL if present
-      let mimeType = "image/jpeg";
-      let base64Data = image;
-      if (image.startsWith("data:")) {
-        const match = image.match(/^data:([^;]+);base64,(.+)$/);
-        if (match) {
-          mimeType = match[1];
-          base64Data = match[2];
-        }
-      }
+      // Resolve the image input (handles URLs, data URLs, and base64) securely server-side
+      const { base64Data, mimeType } = await resolveImageToBase64(image);
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
@@ -980,56 +1262,53 @@ Return your response in structured JSON format matching this schema:
   "technicalSpecs": "Professional camera specs (e.g. Camera body • Lens • ISO • f-stop • Shutter speed)."
 }`;
 
-      const response = await runWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
+      const response = await generateContentWithFallback(ai, {
+        contents: [
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data
+            }
+          },
+          prompt
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              visualAudit: {
+                type: Type.STRING,
+                description: "A summary of scanned visual elements, lighting, and textures."
+              },
+              criticalCheck: {
+                type: Type.STRING,
+                description: "The visual check or evidence verified before confirming the category and details."
+              },
+              category: {
+                type: Type.STRING,
+                description: "The capitalized stylized category (e.g., 'EDITORIAL PORTRAIT', 'LUXURY WEDDING')."
+              },
+              title: {
+                type: Type.STRING,
+                description: "A highly specific, poetic, non-generic title."
+              },
+              tagline: {
+                type: Type.STRING,
+                description: "A short poetic tagline/quote under 15 words."
+              },
+              description: {
+                type: Type.STRING,
+                description: "A 2-3 sentence creative backstory, emotional weight, and lighting style."
+              },
+              technicalSpecs: {
+                type: Type.STRING,
+                description: "Realistic camera specs, format: Camera body • Lens • ISO • f-stop • Shutter speed."
               }
             },
-            prompt
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                visualAudit: {
-                  type: Type.STRING,
-                  description: "A summary of scanned visual elements, lighting, and textures."
-                },
-                criticalCheck: {
-                  type: Type.STRING,
-                  description: "The visual check or evidence verified before confirming the category and details."
-                },
-                category: {
-                  type: Type.STRING,
-                  description: "The capitalized stylized category (e.g., 'EDITORIAL PORTRAIT', 'LUXURY WEDDING')."
-                },
-                title: {
-                  type: Type.STRING,
-                  description: "A highly specific, poetic, non-generic title."
-                },
-                tagline: {
-                  type: Type.STRING,
-                  description: "A short poetic tagline/quote under 15 words."
-                },
-                description: {
-                  type: Type.STRING,
-                  description: "A 2-3 sentence creative backstory, emotional weight, and lighting style."
-                },
-                technicalSpecs: {
-                  type: Type.STRING,
-                  description: "Realistic camera specs, format: Camera body • Lens • ISO • f-stop • Shutter speed."
-                }
-              },
-              required: ["visualAudit", "criticalCheck", "category", "title", "tagline", "description", "technicalSpecs"]
-            }
+            required: ["visualAudit", "criticalCheck", "category", "title", "tagline", "description", "technicalSpecs"]
           }
-        });
+        }
       });
 
       const jsonText = response.text || "{}";
