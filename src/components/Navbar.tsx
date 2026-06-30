@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Menu, X, Camera, Phone } from 'lucide-react';
+import { CameraHandsLogo } from './Logo';
 
 interface NavbarProps {
   currentPage: string;
@@ -57,8 +58,8 @@ export default function Navbar({ currentPage, onPageChange, onBookClick, onLogoC
               }}
               className="flex items-center space-x-3 px-3 py-1.5 bg-black border border-white/10 rounded-none group hover:border-gold/40 transition-all duration-300 shadow-md"
             >
-              <div className="relative flex items-center justify-center w-8 h-8 rounded-none border border-gold/30 bg-[#0C0C0C] group-hover:border-gold transition-colors duration-300">
-                <Camera className="w-4 h-4 text-gold" />
+              <div className="relative flex items-center justify-center w-10 h-10 rounded-none border border-gold/30 bg-[#0C0C0C] group-hover:border-gold transition-colors duration-300 p-0.5 overflow-hidden">
+                <CameraHandsLogo size={36} color="#D4AF37" className="text-gold" />
                 <span className="absolute -inset-1 border border-dashed border-gold/0 group-hover:border-gold/30 transition-all duration-500" />
               </div>
               <div className="flex flex-col">

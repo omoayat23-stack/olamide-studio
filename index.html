@@ -3,8 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>Olamide Visuals | Cinematic Storytelling & Visual Excellence</title>
+    
+    <!-- Standard SEO Metadata -->
+    <meta name="description" content="Olamide Visuals is a professional photography, and creative media brand specializing in cinematic storytelling, event coverage, creative content production, and visual excellence." />
+    <meta name="keywords" content="photography, cinematic storytelling, event coverage, creative content, Olamide Visuals, professional photography" />
+    <meta name="author" content="Olamide Visuals" />
+
+    <!-- Open Graph / Facebook / WhatsApp / Instagram / Telegram -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Olamide Visuals | Cinematic Storytelling & Visual Excellence" />
+    <meta property="og:description" content="Olamide Visuals is a professional photography, and creative media brand specializing in cinematic storytelling, event coverage, creative content production, and visual excellence." />
+    <meta property="og:url" content="/" />
+    <meta property="og:site_name" content="Olamide Visuals" />
+    <meta property="og:image" content="/social_preview.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="675" />
+    <meta property="og:image:type" content="image/jpeg" />
+
+    <!-- X / Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Olamide Visuals | Cinematic Storytelling & Visual Excellence" />
+    <meta name="twitter:description" content="Olamide Visuals is a professional photography, and creative media brand specializing in cinematic storytelling, event coverage, creative content production, and visual excellence." />
+    <meta name="twitter:image" content="/social_preview.jpg" />
+
     <script>
+      // Dynamically resolve and set absolute URLs for sharing metadata in browser-based scrapers
+      if (typeof window !== 'undefined' && window.location) {
+        document.addEventListener('DOMContentLoaded', () => {
+          const origin = window.location.origin;
+          const ogImage = document.querySelector('meta[property="og:image"]');
+          if (ogImage) ogImage.setAttribute('content', origin + '/social_preview.jpg');
+          const twitterImage = document.querySelector('meta[name="twitter:image"]');
+          if (twitterImage) twitterImage.setAttribute('content', origin + '/social_preview.jpg');
+          const ogUrl = document.querySelector('meta[property="og:url"]');
+          if (ogUrl) ogUrl.setAttribute('content', window.location.href);
+        });
+      }
+
       // Safe, robust WebSocket override and log filter to gracefully handle Vite HMR WebSockets
       if (typeof window !== 'undefined') {
         // Intercept standard console.error and console.warn to suppress benign HMR socket logs

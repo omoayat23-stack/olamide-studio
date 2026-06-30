@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Camera } from 'lucide-react';
+import { CameraHandsLogo } from './Logo';
 
 interface PreloaderProps {
   onComplete: () => void;
@@ -78,7 +79,7 @@ export default function Preloader({ onComplete }: PreloaderProps) {
                 transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}
               />
 
-              <Camera className="w-10 h-10 md:w-14 md:h-14 text-gold" />
+              <CameraHandsLogo size={68} color="#D4AF37" className="text-gold" />
             </motion.div>
 
             {/* Title / Identity */}

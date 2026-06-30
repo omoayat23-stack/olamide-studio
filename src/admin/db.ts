@@ -535,6 +535,27 @@ export const saveToDB = <T>(key: string, data: T): void => {
     };
     const supTable = KEY_TO_SUPABASE_TABLE[key];
     if (supTable && Array.isArray(data)) {
+      // Sync deletions to Supabase automatically (independent of admin status checks)
+      try {
+        const oldList: any[] = oldRaw ? JSON.parse(oldRaw) : [];
+        const newList = data as any[];
+        if (Array.isArray(oldList)) {
+          oldList.forEach(oldItem => {
+            const id = oldItem.id || oldItem.txId || oldItem.bookingId;
+            if (id && !newList.some(newItem => (newItem.id || newItem.txId || newItem.bookingId) === id)) {
+              console.log(`[SUPABASE DELETING] Record with ID '${id}' from table '${supTable}'`);
+              fetch("/api/supabase/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tableName: supTable, id })
+              }).catch(err => console.error("Supabase auto-delete error:", err));
+            }
+          });
+        }
+      } catch (err) {
+        console.error("Error checking for deleted items for Supabase:", err);
+      }
+
       const mapped = data.map(item => {
         const clone = { ...item };
         if (!clone.id) {
@@ -669,15 +690,6 @@ export const saveToDB = <T>(key: string, data: T): void => {
         oldList.forEach(oldItem => {
           const id = oldItem.id || oldItem.txId || oldItem.bookingId;
           if (id && !newList.some(newItem => (newItem.id || newItem.txId || newItem.bookingId) === id)) {
-            // Also auto-delete from Supabase if table mapping exists
-            if (supTable) {
-              fetch("/api/supabase/delete", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ tableName: supTable, id })
-              }).catch(err => console.error("Supabase auto-delete error:", err));
-            }
-
             if (isAdmin || !['bookings', 'messages'].includes(coll)) {
               m.deleteItemFromCloud(coll, id).catch(() => {});
             }

@@ -5,6 +5,7 @@
 
 import { motion } from 'motion/react';
 import { Camera, Phone, Mail, Instagram, MapPin, MessageSquare, ArrowUp } from 'lucide-react';
+import { CameraHandsLogo } from './Logo';
 
 interface FooterProps {
   onQuickContactClick: () => void;
@@ -29,9 +30,9 @@ export default function Footer({ onQuickContactClick }: FooterProps) {
             
             {/* Column 1: Brand & Bio */}
             <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 rounded-full border border-gold/30 flex items-center justify-center text-gold bg-black">
-                  <Camera className="w-4 h-4" />
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 border border-gold/30 flex items-center justify-center text-gold bg-black/40 overflow-hidden p-0.5">
+                  <CameraHandsLogo size={36} color="#D4AF37" className="text-gold" />
                 </div>
                 <div className="flex flex-col">
                   <span className="text-sm font-serif font-bold tracking-[0.2em] text-white uppercase leading-none">
